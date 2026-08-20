@@ -8,9 +8,15 @@ create table if not exists public.profiles (
   id uuid primary key references auth.users(id) on delete cascade,
   full_name text not null default '',
   control_number text,
+  username text,
   role text not null default 'student' check (role in ('student','teacher','admin')),
   created_at timestamptz not null default now()
 );
+
+alter table public.profiles add column if not exists username text;
+
+create unique index if not exists profiles_username_lower_idx
+  on public.profiles (lower(username)) where username is not null;
 
 create table if not exists public.school_groups (
   id uuid primary key default gen_random_uuid(),
@@ -58,11 +64,12 @@ language plpgsql
 security definer set search_path = ''
 as $$
 begin
-  insert into public.profiles(id, full_name, control_number, role)
+  insert into public.profiles(id, full_name, control_number, username, role)
   values(
     new.id,
     coalesce(new.raw_user_meta_data ->> 'full_name',''),
     nullif(new.raw_user_meta_data ->> 'control_number',''),
+    nullif(new.raw_user_meta_data ->> 'username',''),
     'student'
   );
   return new;
@@ -128,6 +135,69 @@ begin
 end;
 $$;
 
+-- Helper functions (security definer = bypass RLS internally) to avoid
+-- infinite recursion between the school_groups and group_members policies,
+-- since each one otherwise needs to read the other RLS-protected table.
+create or replace function public.is_teacher_of_group(p_group_id uuid)
+returns boolean
+language sql
+security definer
+set search_path = public
+stable
+as $$
+  select exists(
+    select 1 from public.school_groups sg
+    where sg.id = p_group_id and sg.teacher_id = auth.uid()
+  );
+$$;
+
+create or replace function public.is_member_of_group(p_group_id uuid)
+returns boolean
+language sql
+security definer
+set search_path = public
+stable
+as $$
+  select exists(
+    select 1 from public.group_members gm
+    where gm.group_id = p_group_id and gm.student_id = auth.uid()
+  );
+$$;
+
+create or replace function public.is_admin()
+returns boolean
+language sql
+security definer
+set search_path = public
+stable
+as $$
+  select exists(select 1 from public.profiles where id = auth.uid() and role = 'admin');
+$$;
+
+-- Solo un admin puede cambiar el rol de una cuenta (evita que un alumno se
+-- autoasigne role='teacher'/'admin' vía un update directo a su propio perfil).
+create or replace function public.prevent_self_role_change()
+returns trigger
+language plpgsql
+security definer
+set search_path = public
+as $$
+begin
+  -- Solo se restringe cuando la escritura llega vía PostgREST como un
+  -- usuario autenticado normal. Conexiones directas (SQL Editor, CLI,
+  -- service_role) no pasan por aquí, para poder crear el primer admin.
+  if new.role is distinct from old.role and auth.role()='authenticated' and not public.is_admin() then
+    raise exception 'Solo un administrador puede cambiar el rol de una cuenta.';
+  end if;
+  return new;
+end;
+$$;
+
+drop trigger if exists trg_prevent_self_role_change on public.profiles;
+create trigger trg_prevent_self_role_change
+before update on public.profiles
+for each row execute procedure public.prevent_self_role_change();
+
 -- RLS
 alter table public.profiles enable row level security;
 alter table public.school_groups enable row level security;
@@ -156,9 +226,7 @@ using (
 
 drop policy if exists "teacher groups read" on public.school_groups;
 create policy "teacher groups read" on public.school_groups for select to authenticated
-using (teacher_id=auth.uid() or exists(
-  select 1 from public.group_members gm where gm.group_id=school_groups.id and gm.student_id=auth.uid()
-));
+using (teacher_id=auth.uid() or public.is_member_of_group(id));
 
 drop policy if exists "teacher groups insert" on public.school_groups;
 create policy "teacher groups insert" on public.school_groups for insert to authenticated
@@ -173,7 +241,7 @@ using (teacher_id=auth.uid()) with check (teacher_id=auth.uid());
 drop policy if exists "members relevant read" on public.group_members;
 create policy "members relevant read" on public.group_members for select to authenticated
 using (
-  student_id=auth.uid() or exists(select 1 from public.school_groups sg where sg.id=group_id and sg.teacher_id=auth.uid())
+  student_id=auth.uid() or public.is_teacher_of_group(group_id)
 );
 
 drop policy if exists "student own attempts" on public.exercise_attempts;
@@ -204,10 +272,36 @@ using (
   )
 );
 
+-- Admin: acceso total para ver y administrar todas las cuentas, grupos y avance.
+drop policy if exists "admin all profiles" on public.profiles;
+create policy "admin all profiles" on public.profiles for all to authenticated
+using (public.is_admin()) with check (public.is_admin());
+
+drop policy if exists "admin all groups" on public.school_groups;
+create policy "admin all groups" on public.school_groups for all to authenticated
+using (public.is_admin()) with check (public.is_admin());
+
+drop policy if exists "admin all members" on public.group_members;
+create policy "admin all members" on public.group_members for all to authenticated
+using (public.is_admin()) with check (public.is_admin());
+
+drop policy if exists "admin read attempts" on public.exercise_attempts;
+create policy "admin read attempts" on public.exercise_attempts for select to authenticated
+using (public.is_admin());
+
+drop policy if exists "admin read progress" on public.student_progress;
+create policy "admin read progress" on public.student_progress for select to authenticated
+using (public.is_admin());
+
 grant execute on function public.join_group_by_code(text) to authenticated;
 grant execute on function public.record_attempt(text,text,text,text,boolean,integer) to authenticated;
+grant execute on function public.is_teacher_of_group(uuid) to authenticated;
+grant execute on function public.is_member_of_group(uuid) to authenticated;
+grant execute on function public.is_admin() to authenticated;
 
 -- IMPORTANTE:
--- Por seguridad, el registro web crea alumnos.
--- Para convertir una cuenta en docente, el administrador ejecuta:
--- update public.profiles set role='teacher' where id=(select id from auth.users where email='docente@escuela.edu.mx');
+-- Por seguridad, el registro web siempre crea alumnos.
+-- Un administrador puede cambiar el rol de cualquier cuenta desde el panel
+-- admin de la app. Para la primera cuenta admin (no hay otra forma de crear
+-- la primera), ejecuta manualmente en SQL Editor:
+-- update public.profiles set role='admin' where username='<usuario>';

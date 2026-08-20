@@ -5,11 +5,16 @@ const hasSupabase=!!(CFG.supabaseUrl&&CFG.supabaseAnonKey&&window.supabase);
 const sb=hasSupabase?window.supabase.createClient(CFG.supabaseUrl,CFG.supabaseAnonKey):null;
 const el=document.getElementById('app');
 const DEMO_KEY='codefun-v10-demo';
-let app={mode:hasSupabase?'cloud':'demo',user:null,profile:null,view:'home',subject:'python',session:null,groups:[],students:[],progress:[],attempts:[]};
+const USERNAME_DOMAIN='@codefun.local';
+function usernameToEmail(u){
+ const v=String(u||'').trim().toLowerCase();
+ return v.includes('@')?v:v+USERNAME_DOMAIN;
+}
+let app={mode:hasSupabase?'cloud':'demo',user:null,profile:null,view:'home',subject:'python',session:null,lesson:null,groups:[],students:[],progress:[],attempts:[],admin:{profiles:[],groups:[],members:[],progress:[]}};
 
 function esc(s=''){return String(s).replace(/[&<>"']/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]))}
 function pct(a,b){return b?Math.round(a/b*100):0}
-function demoState(){return JSON.parse(localStorage.getItem(DEMO_KEY)||'null')||{answers:{},xp:0,role:null,name:'',control:''}}
+function demoState(){return JSON.parse(localStorage.getItem(DEMO_KEY)||'null')||{answers:{},xp:0,role:null,name:''}}
 function saveDemo(x){localStorage.setItem(DEMO_KEY,JSON.stringify(x))}
 function exBySubject(id){return D.exercises.filter(e=>e.subject===id)}
 function subjectsCards(){
@@ -43,8 +48,8 @@ function renderAuth(tab='login',msg=''){
        ${tab==='login'?`
        <form id="loginForm">
          <div class="field">
-           <label>Correo electrónico</label>
-           <input name="email" type="email" required placeholder="alumno@escuela.edu.mx">
+           <label>Usuario</label>
+           <input name="username" required placeholder="tu.usuario" autocomplete="username">
          </div>
 
          <div class="field">
@@ -52,7 +57,7 @@ function renderAuth(tab='login',msg=''){
              <label>Contraseña</label>
              <button class="forgot-link" type="button" id="forgotPassword">¿Olvidaste tu contraseña?</button>
            </div>
-           <input name="password" type="password" required minlength="6" placeholder="••••••••">
+           <input name="password" type="password" required minlength="6" placeholder="••••••••" autocomplete="current-password">
          </div>
 
          <button class="btn block login-main-btn">Iniciar sesión</button>
@@ -60,16 +65,15 @@ function renderAuth(tab='login',msg=''){
 
        ${!hasSupabase?`<div class="notice demo-login">
          <b>Modo demo:</b><br>
-         Docente: <b>docente@demo.com</b><br>
-         Alumno: cualquier otro correo<br>
+         Docente: usuario <b>docente</b><br>
+         Alumno: cualquier otro usuario<br>
          Contraseña: mínimo 6 caracteres
        </div>`:''}
        `:`
        <form id="signupForm">
          <div class="field"><label>Nombre completo</label><input name="full_name" required placeholder="Nombre y apellidos"></div>
-         <div class="field"><label>Número de control</label><input name="control_number" required placeholder="Ej. 232500183"></div>
-         <div class="field"><label>Correo electrónico</label><input name="email" type="email" required placeholder="alumno@escuela.edu.mx"></div>
-         <div class="field"><label>Contraseña</label><input name="password" type="password" required minlength="6" placeholder="Mínimo 6 caracteres"></div>
+         <div class="field"><label>Usuario</label><input name="username" required minlength="3" pattern="[A-Za-z0-9._\\-]+" title="Solo letras, números, punto, guion y guion bajo" placeholder="tu.usuario" autocomplete="username"></div>
+         <div class="field"><label>Contraseña</label><input name="password" type="password" required minlength="6" placeholder="Mínimo 6 caracteres" autocomplete="new-password"></div>
          <div class="field"><label>Código de grupo <span class="muted">(opcional)</span></label><input name="group_code" placeholder="Ej. PB3102"></div>
          <button class="btn block login-main-btn">Crear cuenta</button>
        </form>`}
@@ -90,38 +94,39 @@ function renderAuth(tab='login',msg=''){
  if(tab==='login'){
    document.getElementById('loginForm').onsubmit=login;
    const forgot=document.getElementById('forgotPassword');
-   if(forgot) forgot.onclick=async()=>{
-     const email=document.querySelector('input[name="email"]').value.trim();
-     if(!email) return alert('Escribe primero tu correo electrónico.');
-     if(app.mode==='demo') return alert('La recuperación de contraseña estará disponible al conectar Supabase.');
-     const {error}=await sb.auth.resetPasswordForEmail(email);
-     alert(error ? error.message : 'Te enviamos un enlace para restablecer tu contraseña.');
-   };
+   if(forgot) forgot.onclick=()=>alert('Para recuperar tu contraseña, comunícate con el administrador de CodeFun.');
  } else {
    document.getElementById('signupForm').onsubmit=signup;
  }
 }
+function authErrorMessage(error){
+ const m=error?.message||'';
+ if(m.includes('Invalid login credentials'))return 'Usuario o contraseña incorrectos.';
+ if(m.includes('already registered')||m.includes('already exists')||m.includes('duplicate'))return 'Ese usuario ya existe, elige otro.';
+ return m;
+}
 async function login(e){
- e.preventDefault();const f=new FormData(e.target),email=f.get('email'),password=f.get('password');
+ e.preventDefault();const f=new FormData(e.target),username=f.get('username'),password=f.get('password');
  if(app.mode==='demo'){
-   const role=email.toLowerCase()==='docente@demo.com'?'teacher':'student';
-   const d=demoState();d.role=role;d.name=role==='teacher'?'Docente Demo':'Alumno Demo';saveDemo(d);
-   app.user={id:'demo',email};app.profile={id:'demo',full_name:d.name,control_number:d.control||'232500001',role};app.view=role==='teacher'?'teacher':'home';return render();
+   const role=username.trim().toLowerCase()==='docente'?'teacher':'student';
+   const d=demoState();d.role=role;d.name=role==='teacher'?'Docente Demo':'Alumno Demo';d.username=username;saveDemo(d);
+   app.user={id:'demo',username};app.profile={id:'demo',full_name:d.name,username,role};app.view=role==='teacher'?'teacher':'home';return render();
  }
- const {data,error}=await sb.auth.signInWithPassword({email,password});
- if(error)return renderAuth('login','Error: '+error.message);
+ const {data,error}=await sb.auth.signInWithPassword({email:usernameToEmail(username),password});
+ if(error)return renderAuth('login','Error: '+authErrorMessage(error));
  await loadCloudSession(data.session);render();
 }
 async function signup(e){
  e.preventDefault();const f=new FormData(e.target);
+ const username=String(f.get('username')||'').trim();
  if(app.mode==='demo'){
-   const d=demoState();d.role='student';d.name=f.get('full_name');d.control=f.get('control_number');saveDemo(d);
-   app.user={id:'demo',email:f.get('email')};app.profile={id:'demo',full_name:d.name,control_number:d.control,role:'student'};app.view='home';render();return;
+   const d=demoState();d.role='student';d.name=f.get('full_name');d.username=username;saveDemo(d);
+   app.user={id:'demo',username};app.profile={id:'demo',full_name:d.name,username,role:'student'};app.view='home';render();return;
  }
- const email=f.get('email'),password=f.get('password');
- const {data,error}=await sb.auth.signUp({email,password,options:{data:{full_name:f.get('full_name'),control_number:f.get('control_number')}}});
- if(error)return renderAuth('signup','Error: '+error.message);
- if(!data.session)return renderAuth('login','Cuenta creada. Revisa tu correo si la confirmación de email está activada.');
+ const password=f.get('password');
+ const {data,error}=await sb.auth.signUp({email:usernameToEmail(username),password,options:{data:{full_name:f.get('full_name'),username}}});
+ if(error)return renderAuth('signup','Error: '+authErrorMessage(error));
+ if(!data.session)return renderAuth('login','Cuenta creada. Ahora inicia sesión.');
  await loadCloudSession(data.session);
  const code=String(f.get('group_code')||'').trim();
  if(code){const {error:ge}=await sb.rpc('join_group_by_code',{p_code:code});if(ge)alert('Cuenta creada, pero no se pudo unir al grupo: '+ge.message)}
@@ -136,23 +141,39 @@ async function loadCloudSession(session){
  app.user=session?.user||null;if(!app.user)return;
  const {data,error}=await sb.from('profiles').select('*').eq('id',app.user.id).single();
  if(error){alert(error.message);return}
- app.profile=data;app.view=data.role==='teacher'?'teacher':'home';await refreshCloud();
+ app.profile=data;app.view=data.role==='teacher'?'teacher':data.role==='admin'?'admin':'home';await refreshCloud();
 }
 async function refreshCloud(){
  if(app.mode!=='cloud'||!app.profile)return;
  if(app.profile.role==='student'){
    let {data:p}=await sb.from('student_progress').select('*').eq('student_id',app.profile.id);app.progress=p||[];
    let {data:g}=await sb.from('group_members').select('group_id,school_groups(id,name,code,school_year)').eq('student_id',app.profile.id);app.groups=(g||[]).map(x=>x.school_groups).filter(Boolean);
+ }else if(app.profile.role==='admin'){
+   await loadAdminData();
  }else{
    let {data:g}=await sb.from('school_groups').select('*').eq('teacher_id',app.profile.id).order('created_at');app.groups=g||[];
    await loadTeacherStudents();
  }
 }
+async function loadAdminData(){
+ const [profiles,groups,members,progress]=await Promise.all([
+   sb.from('profiles').select('*').order('created_at'),
+   sb.from('school_groups').select('*').order('created_at'),
+   sb.from('group_members').select('*'),
+   sb.from('student_progress').select('*')
+ ]);
+ app.admin={
+   profiles:profiles.data||[],
+   groups:groups.data||[],
+   members:members.data||[],
+   progress:progress.data||[]
+ };
+}
 async function loadTeacherStudents(){
  if(app.mode!=='cloud'){app.students=demoStudents();return}
  if(!app.groups.length){app.students=[];return}
  const gids=app.groups.map(g=>g.id);
- const {data:m,error}=await sb.from('group_members').select('group_id,student_id,profiles!group_members_student_id_fkey(id,full_name,control_number)').in('group_id',gids);
+ const {data:m,error}=await sb.from('group_members').select('group_id,student_id,profiles!group_members_student_id_fkey(id,full_name)').in('group_id',gids);
  if(error){console.error(error);app.students=[];return}
  const ids=[...new Set((m||[]).map(x=>x.student_id))];
  let prog=[];if(ids.length){const r=await sb.from('student_progress').select('*').in('student_id',ids);prog=r.data||[]}
@@ -161,16 +182,19 @@ async function loadTeacherStudents(){
 function nav(){
  const student=[['home','Inicio'],['subjects','Materias'],['practice','Práctica'],['grades','Calificaciones'],['group','Mi grupo'],['profile','Mi perfil']];
  const teacher=[['teacher','Resumen'],['groups','Mis grupos'],['students','Alumnos'],['tracking','Seguimiento'],['teacherSubjects','Materias']];
- return app.profile?.role==='teacher'?teacher:student;
+ const admin=[['admin','Resumen'],['adminUsers','Cuentas'],['adminGroups','Grupos'],['teacherSubjects','Materias']];
+ const role=app.profile?.role;
+ return role==='admin'?admin:role==='teacher'?teacher:student;
 }
 function layout(content){
  const n=nav();
- const isTeacher=app.profile?.role==='teacher';
+ const role=app.profile?.role;
+ const roleTxt=roleLabel(role);
  const mobileNav=n.slice(0,4);
 
  el.innerHTML=`<div class="app-shell">
    <header class="mobile-topbar">
-     <button class="icon-btn" id="mobileMenuBtn" aria-label="Abrir menú">☰</button>
+     <button class="icon-btn" id="mobileMenuBtn" aria-label="Abrir menú">${svgIcon('menu')}</button>
      <div class="mobile-brand">Code<span>Fun</span></div>
      <div class="mobile-avatar">${esc((app.profile?.full_name||'U').charAt(0).toUpperCase())}</div>
    </header>
@@ -180,13 +204,13 @@ function layout(content){
    <aside class="side" id="sideNav">
      <div class="side-head">
        <div class="logo">Code<span>Fun</span></div>
-       <button class="icon-btn side-close" id="sideClose" aria-label="Cerrar menú">✕</button>
+       <button class="icon-btn side-close" id="sideClose" aria-label="Cerrar menú">${svgIcon('close')}</button>
      </div>
-     <div class="meta">${isTeacher?'Panel docente':'Espacio del alumno'} · ${app.mode==='cloud'?'En línea':'Demo local'}</div>
+     <div class="meta">${role==='admin'?'Panel administrador':role==='teacher'?'Panel docente':'Espacio del alumno'} · ${app.mode==='cloud'?'En línea':'Demo local'}</div>
 
      <div class="profile-card-mini">
        <div class="avatar">${esc((app.profile?.full_name||'U').charAt(0).toUpperCase())}</div>
-       <div><b>${esc(app.profile?.full_name||'Usuario')}</b><div class="muted">${isTeacher?'Docente':'Alumno'}</div></div>
+       <div><b>${esc(app.profile?.full_name||'Usuario')}</b><div class="muted">${roleTxt}</div></div>
      </div>
 
      <div class="nav">${n.map(([v,l])=>`<button data-nav="${v}" class="${app.view===v?'active':''}"><span>${navIcon(v)}</span>${l}</button>`).join('')}</div>
@@ -195,8 +219,8 @@ function layout(content){
 
    <main class="main">
      <div class="desktop-top">
-       <div><div class="page-eyebrow">${isTeacher?'Panel docente':'Panel del alumno'}</div><b>CodeFun Académico</b></div>
-       <div class="profile-chip">${isTeacher?'Docente':'Alumno'} · ${esc(app.user?.email||'')}</div>
+       <div><div class="page-eyebrow">${role==='admin'?'Panel administrador':role==='teacher'?'Panel docente':'Panel del alumno'}</div><b>CodeFun Académico</b></div>
+       <div class="profile-chip">${roleTxt} · ${esc(app.profile?.username||app.user?.email||'')}</div>
      </div>
      ${modeNotice()}
      ${content}
@@ -204,7 +228,7 @@ function layout(content){
 
    <nav class="mobile-bottom-nav">
      ${mobileNav.map(([v,l])=>`<button data-nav="${v}" class="${app.view===v?'active':''}"><span>${navIcon(v)}</span><small>${l}</small></button>`).join('')}
-     <button id="mobileMore"><span>•••</span><small>Más</small></button>
+     <button id="mobileMore"><span>${svgIcon('more')}</span><small>Más</small></button>
    </nav>
  </div>`;
 
@@ -213,7 +237,11 @@ function layout(content){
  const open=()=>{side?.classList.add('open');overlay?.classList.add('show');document.body.classList.add('menu-open')};
  const close=()=>{side?.classList.remove('open');overlay?.classList.remove('show');document.body.classList.remove('menu-open')};
 
- document.querySelectorAll('[data-nav]').forEach(b=>b.onclick=()=>{app.view=b.dataset.nav;app.session=null;close();render()});
+ document.querySelectorAll('[data-nav]').forEach(b=>b.onclick=async()=>{
+   app.view=b.dataset.nav;app.session=null;close();
+   if(app.profile?.role==='admin'&&app.mode==='cloud')await loadAdminData();
+   render();
+ });
  document.getElementById('logout').onclick=logout;
  document.getElementById('mobileMenuBtn')?.addEventListener('click',open);
  document.getElementById('mobileMore')?.addEventListener('click',open);
@@ -221,9 +249,22 @@ function layout(content){
  overlay?.addEventListener('click',close);
 }
 
+const ICON_PATHS={
+ home:'<path d="M4 11.5 12 4l8 7.5"/><path d="M6 10v9h12v-9"/><path d="M10 19v-5h4v5"/>',
+ grid:'<rect x="4" y="4" width="7" height="7" rx="1.5"/><rect x="13" y="4" width="7" height="7" rx="1.5"/><rect x="4" y="13" width="7" height="7" rx="1.5"/><rect x="13" y="13" width="7" height="7" rx="1.5"/>',
+ code:'<path d="M9 8 4.5 12 9 16"/><path d="M15 8l4.5 4-4.5 4"/>',
+ star:'<path d="M12 3.5l2.6 5.5 6 .8-4.4 4.2 1.1 6-5.3-2.9-5.3 2.9 1.1-6-4.4-4.2 6-.8Z"/>',
+ users:'<circle cx="9" cy="8" r="3.2"/><path d="M3 20c0-3.6 2.7-6 6-6s6 2.4 6 6"/><circle cx="17.5" cy="9" r="2.6"/><path d="M15.5 14.2c2.6.3 4.5 2.4 4.5 5.3"/>',
+ user:'<circle cx="12" cy="8.5" r="3.7"/><path d="M4.5 20c.7-4 3.6-6 7.5-6s6.8 2 7.5 6"/>',
+ trending:'<path d="M4 16l5.2-5.5 3.6 3 6.2-6.8"/><path d="M15 6.5h4.5V11"/>',
+ close:'<path d="M6 6l12 12M18 6 6 18"/>',
+ menu:'<path d="M4 7h16M4 12h16M4 17h16"/>',
+ more:'<circle cx="5" cy="12" r="1.6"/><circle cx="12" cy="12" r="1.6"/><circle cx="19" cy="12" r="1.6"/>'
+};
+function svgIcon(name){return `<svg class="icon" viewBox="0 0 24 24">${ICON_PATHS[name]||''}</svg>`}
 function navIcon(v){
- const icons={home:'⌂',subjects:'▦',practice:'⌘',grades:'★',group:'👥',profile:'●',teacher:'⌂',groups:'▦',students:'👥',tracking:'↗',teacherSubjects:'⌘'};
- return icons[v]||'•';
+ const icons={home:'home',subjects:'grid',practice:'code',grades:'star',group:'users',profile:'user',teacher:'home',groups:'grid',students:'users',tracking:'trending',teacherSubjects:'code',admin:'home',adminUsers:'users',adminGroups:'grid'};
+ return svgIcon(icons[v]||'grid');
 }
 function studentHome(){
  let total=0,done=0,correct=0,xp=0;
@@ -238,6 +279,92 @@ function practicePage(){
  return `<div class="row"><div><h2>${s.name}</h2><div class="muted">${exBySubject(app.subject).length} ejercicios</div></div><button class="btn soft" id="switchSub">Cambiar a ${app.subject==='python'?'Lógica':'Python'}</button></div>
  <div class="grid">${s.units.map(u=>`<div class="c s6"><span class="badge">${u.id}</span><h3>${u.title}</h3><p class="muted">${u.topics.join(' · ')}</p>${u.topics.map(t=>`<button class="btn ghost" data-topic="${esc(t)}" style="margin:4px">${esc(t)}</button>`).join('')}</div>`).join('')}</div>`;
 }
+const PY_LESSONS={
+ 'Variables y operadores':{
+   title:'Variables y operadores',
+   body:`<p>Una <b>variable</b> guarda un valor con un nombre para poder usarlo después. Los <b>operadores aritméticos</b> combinan valores: <code>+</code> <code>-</code> <code>*</code> <code>/</code> (división con decimales), <code>//</code> (división entera) y <code>%</code> (residuo o resto).</p>
+     <div class="code">x = 7
+y = 2
+print(x + y)   # 9
+print(x // y)  # 3  división entera
+print(x % y)   # 1  residuo</div>
+     <p class="muted">Como en matemáticas, primero se resuelven los paréntesis, luego <code>* / // %</code>, y al final <code>+ -</code>.</p>`
+ },
+ 'Tipos y entrada':{
+   title:'Tipos de dato y entrada de datos',
+   body:`<p>Python maneja varios tipos: <b>int</b> (enteros), <b>float</b> (decimales), <b>str</b> (texto) y <b>bool</b> (verdadero/falso). La función <code>input()</code> siempre devuelve <b>texto</b>, aunque la persona escriba un número.</p>
+     <div class="code">edad = input('Edad: ')   # edad es str, aunque escribas 15
+edad = int(edad)         # ahora sí es un número entero
+print(edad + 1)</div>
+     <p class="muted">Si olvidas convertir con <code>int()</code> o <code>float()</code>, no podrás sumar ese valor como número.</p>`
+ },
+ 'Condicionales':{
+   title:'Condicionales: if / elif / else',
+   body:`<p><code>if</code> ejecuta su bloque solo si la condición es verdadera. <code>elif</code> prueba otra condición si la anterior fue falsa. <code>else</code> se ejecuta si ninguna de las anteriores fue verdadera. Python revisa las condiciones en orden, de arriba hacia abajo, y solo entra a la primera que sea verdadera.</p>
+     <div class="code">n = -5
+if n > 0:
+    print('positivo')
+elif n == 0:
+    print('cero')
+else:
+    print('negativo')</div>`
+ },
+ 'Ciclos':{
+   title:'Ciclos: for y while',
+   body:`<p><code>for</code> repite un bloque una cantidad conocida de veces, normalmente recorriendo <code>range(n)</code> o una lista. <code>while</code> repite mientras una condición siga siendo verdadera. <code>range(3)</code> genera los valores 0, 1 y 2: empieza en 0 y no incluye el número final.</p>
+     <div class="code">for i in range(3):
+    print(i)
+# imprime: 0  1  2</div>`
+ },
+ 'Funciones':{
+   title:'Funciones',
+   body:`<p><code>def</code> crea una función reutilizable. Los <b>parámetros</b> son los datos que recibe entre paréntesis; <code>return</code> entrega un resultado a quien la llamó. Si una función no tiene <code>return</code>, su resultado es <code>None</code>.</p>
+     <div class="code">def cuadrado(n):
+    return n * n
+
+print(cuadrado(4))  # 16</div>`
+ },
+ 'Listas':{
+   title:'Listas',
+   body:`<p>Una <b>lista</b> guarda varios valores en orden, entre corchetes <code>[ ]</code>. Cada elemento tiene una posición o <b>índice</b>, y en Python los índices <b>empiezan en 0</b>, no en 1.</p>
+     <div class="code">datos = [10, 20, 30]
+print(datos[0])   # 10 (primer elemento)
+print(datos[1])   # 20 (segundo elemento)
+print(len(datos)) # 3  (cuántos elementos hay)</div>`
+ },
+ 'Depuración':{
+   title:'Depuración: encontrar y corregir errores',
+   body:`<p>Depurar es leer el código con cuidado para encontrar qué falla. Los errores más comunes al empezar: sumar texto con números sin convertir con <code>int()</code>/<code>float()</code>, indentación incorrecta, paréntesis sin cerrar, o usar <code>=</code> (asignar) en vez de <code>==</code> (comparar).</p>
+     <div class="code">edad = input('Edad: ')
+print(edad + 1)        # error: str + int
+
+# corrección:
+print(int(edad) + 1)</div>
+     <p class="muted">Antes de ejecutar, lee línea por línea e imagina qué hace cada una.</p>`
+ }
+};
+function openTopic(topic){
+ const lesson=app.subject==='python'?PY_LESSONS[topic]:null;
+ if(lesson){app.lesson=topic;render()}
+ else startTopic(topic);
+}
+function lessonPage(){
+ const topic=app.lesson,lesson=PY_LESSONS[topic];
+ layout(`<div class="exercise">
+   <div class="exercise-top">
+     <button class="icon-btn" id="exitLesson" aria-label="Salir">${svgIcon('close')}</button>
+     <div class="exercise-progress-wrap"><div class="muted small">Lección antes de practicar</div></div>
+     <span class="badge">${esc(topic)}</span>
+   </div>
+   <div class="c exercise-card">
+     <h2>${esc(lesson.title)}</h2>
+     ${lesson.body}
+     <button class="btn" id="startExercises" style="margin-top:16px">Comenzar ejercicios →</button>
+   </div>
+ </div>`);
+ document.getElementById('exitLesson').onclick=()=>{app.lesson=null;app.view='practice';render()};
+ document.getElementById('startExercises').onclick=()=>{app.lesson=null;startTopic(topic)};
+}
 function startTopic(topic){const ids=D.exercises.filter(e=>e.subject===app.subject&&e.topic===topic).map(e=>e.id);app.session={ids,index:0,topic};renderExercise()}
 function renderExercise(){
  const ss=app.session,ex=D.exercises.find(e=>e.id===ss.ids[ss.index]);
@@ -245,7 +372,7 @@ function renderExercise(){
  const prog=pct(ss.index,ss.ids.length);
  layout(`<div class="exercise">
    <div class="exercise-top">
-     <button class="icon-btn" id="exitEx" aria-label="Salir">✕</button>
+     <button class="icon-btn" id="exitEx" aria-label="Salir">${svgIcon('close')}</button>
      <div class="exercise-progress-wrap">
        <div class="progress exercise-progress"><span style="width:${prog}%"></span></div>
        <div class="muted small">Ejercicio ${ss.index+1} de ${ss.ids.length}</div>
@@ -309,7 +436,12 @@ function exerciseHint(ex){
 
 async function answerExercise(ex,val){
  const correct=val===ex.answer,xp=correct?10:2;
- document.querySelectorAll('[data-answer]').forEach(x=>x.disabled=true);
+ document.querySelectorAll('[data-answer]').forEach(x=>{
+   x.disabled=true;
+   const v=decodeURIComponent(x.dataset.answer);
+   if(v===ex.answer)x.classList.add('correct');
+   else if(v===val)x.classList.add('incorrect');
+ });
  if(app.mode==='demo'){const d=demoState();if(!d.answers[ex.id]){d.answers[ex.id]={correct,value:val};d.xp=(d.xp||0)+xp;saveDemo(d)}}
  else{
    const {error}=await sb.rpc('record_attempt',{p_exercise_id:ex.id,p_subject_id:ex.subject,p_topic:ex.topic,p_answer:val,p_correct:correct,p_xp:xp});
@@ -333,16 +465,17 @@ function groupPage(){
  const g=app.groups[0];
  return `<h2>Mi grupo</h2>${g?`<div class="c"><span class="badge">Inscrito</span><h3>${esc(g.name)}</h3><div class="row"><span>Código</span><b>${esc(g.code)}</b></div><div class="row"><span>Ciclo</span><b>${esc(g.school_year||'—')}</b></div></div>`:`<div class="c"><h3>Aún no estás en un grupo</h3><p class="muted">Escribe el código que te proporcionó tu docente.</p><form id="joinForm"><div class="field"><input name="code" required placeholder="Ej. PB3102"></div><button class="btn">Unirme al grupo</button></form></div>`}`;
 }
-function profilePage(){return `<h2>Mi perfil</h2><div class="c s6"><div class="field"><label>Nombre</label><input value="${esc(app.profile.full_name||'')}" disabled></div><div class="field"><label>Número de control</label><input value="${esc(app.profile.control_number||'')}" disabled></div><div class="field"><label>Correo</label><input value="${esc(app.user.email||'')}" disabled></div><div class="field"><label>Rol</label><input value="${app.profile.role==='teacher'?'Docente':'Alumno'}" disabled></div></div>`}
+function roleLabel(r){return r==='admin'?'Administrador':r==='teacher'?'Docente':'Alumno'}
+function profilePage(){return `<h2>Mi perfil</h2><div class="c s6"><div class="field"><label>Nombre</label><input value="${esc(app.profile.full_name||'')}" disabled></div><div class="field"><label>Usuario</label><input value="${esc(app.profile.username||'')}" disabled></div><div class="field"><label>Rol</label><input value="${roleLabel(app.profile.role)}" disabled></div></div>`}
 function demoStudents(){return[
- {id:'s1',full_name:'Sofía Martínez',control_number:'232500101',progress:[{subject_id:'python',exercises_done:96,correct_answers:86,xp:910,last_activity:new Date().toISOString()},{subject_id:'logic',exercises_done:90,correct_answers:82,xp:850}]},
- {id:'s2',full_name:'Diego Hernández',control_number:'232500102',progress:[{subject_id:'python',exercises_done:77,correct_answers:60,xp:680},{subject_id:'logic',exercises_done:80,correct_answers:65,xp:710}]},
- {id:'s3',full_name:'Valeria Reyes',control_number:'232500103',progress:[{subject_id:'python',exercises_done:38,correct_answers:20,xp:330},{subject_id:'logic',exercises_done:45,correct_answers:27,xp:390}]},
- {id:'s4',full_name:'Ángel Torres',control_number:'232500104',progress:[{subject_id:'python',exercises_done:24,correct_answers:11,xp:210},{subject_id:'logic',exercises_done:31,correct_answers:15,xp:260}]}
+ {id:'s1',full_name:'Sofía Martínez',progress:[{subject_id:'python',exercises_done:96,correct_answers:86,xp:910,last_activity:new Date().toISOString()},{subject_id:'logic',exercises_done:90,correct_answers:82,xp:850}]},
+ {id:'s2',full_name:'Diego Hernández',progress:[{subject_id:'python',exercises_done:77,correct_answers:60,xp:680},{subject_id:'logic',exercises_done:80,correct_answers:65,xp:710}]},
+ {id:'s3',full_name:'Valeria Reyes',progress:[{subject_id:'python',exercises_done:38,correct_answers:20,xp:330},{subject_id:'logic',exercises_done:45,correct_answers:27,xp:390}]},
+ {id:'s4',full_name:'Ángel Torres',progress:[{subject_id:'python',exercises_done:24,correct_answers:11,xp:210},{subject_id:'logic',exercises_done:31,correct_answers:15,xp:260}]}
 ]}
 function teacherHome(){
  const sts=app.mode==='demo'?demoStudents():app.students;let attention=sts.filter(s=>studentAvg(s)<60).length;
- return `<section class="hero"><h1>Panel docente</h1><p>Consulta grupos, estudiantes, actividad y avance académico desde un solo lugar.</p></section><div class="grid"><div class="c s3"><div class="muted">Grupos</div><div class="metric">${app.mode==='demo'?1:app.groups.length}</div></div><div class="c s3"><div class="muted">Alumnos</div><div class="metric">${sts.length}</div></div><div class="c s3"><div class="muted">Promedio de avance</div><div class="metric">${sts.length?Math.round(sts.reduce((a,s)=>a+studentCompletion(s),0)/sts.length):0}%</div></div><div class="c s3"><div class="muted">Requieren atención</div><div class="metric">${attention}</div></div><div class="c s12"><h3>Actividad reciente</h3>${sts.slice(0,5).map(s=>`<div class="row"><div><b>${esc(s.full_name)}</b><div class="muted">${esc(s.control_number||'')}</div></div><span class="badge ${studentAvg(s)<60?'redb':'green'}">${studentAvg(s)}% aciertos</span></div>`).join('')||'<div class="muted">Aún no hay alumnos inscritos.</div>'}</div></div>`;
+ return `<section class="hero"><h1>Panel docente</h1><p>Consulta grupos, estudiantes, actividad y avance académico desde un solo lugar.</p></section><div class="grid"><div class="c s3"><div class="muted">Grupos</div><div class="metric">${app.mode==='demo'?1:app.groups.length}</div></div><div class="c s3"><div class="muted">Alumnos</div><div class="metric">${sts.length}</div></div><div class="c s3"><div class="muted">Promedio de avance</div><div class="metric">${sts.length?Math.round(sts.reduce((a,s)=>a+studentCompletion(s),0)/sts.length):0}%</div></div><div class="c s3"><div class="muted">Requieren atención</div><div class="metric">${attention}</div></div><div class="c s12"><h3>Actividad reciente</h3>${sts.slice(0,5).map(s=>`<div class="row"><b>${esc(s.full_name)}</b><span class="badge ${studentAvg(s)<60?'redb':'green'}">${studentAvg(s)}% aciertos</span></div>`).join('')||'<div class="muted">Aún no hay alumnos inscritos.</div>'}</div></div>`;
 }
 function studentAvg(s){let done=(s.progress||[]).reduce((a,p)=>a+(p.exercises_done||0),0),c=(s.progress||[]).reduce((a,p)=>a+(p.correct_answers||0),0);return pct(c,done)}
 function studentCompletion(s){let done=(s.progress||[]).reduce((a,p)=>a+(p.exercises_done||0),0);return Math.min(100,pct(done,260))}
@@ -352,25 +485,133 @@ function groupsPage(){
 }
 function studentsPage(){
  const sts=app.mode==='demo'?demoStudents():app.students;
- return `<h2>Alumnos</h2><div class="c"><table class="table"><thead><tr><th>Alumno</th><th>Control</th><th>Avance</th><th>Aciertos</th><th>Estado</th><th></th></tr></thead><tbody>${sts.map(s=>`<tr><td>${esc(s.full_name)}</td><td>${esc(s.control_number||'—')}</td><td>${studentCompletion(s)}%</td><td>${studentAvg(s)}%</td><td><span class="badge ${studentAvg(s)<60?'redb':studentAvg(s)<75?'amber':'green'}">${studentAvg(s)<60?'Atención':studentAvg(s)<75?'En proceso':'Buen avance'}</span></td><td><button class="btn ghost" data-student="${s.id}">Ver</button></td></tr>`).join('')}</tbody></table></div>`;
+ return `<h2>Alumnos</h2><div class="c"><table class="table"><thead><tr><th>Alumno</th><th>Avance</th><th>Aciertos</th><th>Estado</th><th></th></tr></thead><tbody>${sts.map(s=>`<tr><td>${esc(s.full_name)}</td><td>${studentCompletion(s)}%</td><td>${studentAvg(s)}%</td><td><span class="badge ${studentAvg(s)<60?'redb':studentAvg(s)<75?'amber':'green'}">${studentAvg(s)<60?'Atención':studentAvg(s)<75?'En proceso':'Buen avance'}</span></td><td><button class="btn ghost" data-student="${s.id}">Ver</button></td></tr>`).join('')}</tbody></table></div>`;
 }
 function trackingPage(){
  const sts=app.mode==='demo'?demoStudents():app.students;
- return `<h2>Seguimiento académico</h2><div class="grid">${sts.map(s=>`<div class="c s6"><div class="row"><div><b>${esc(s.full_name)}</b><div class="muted">${esc(s.control_number||'')}</div></div><b>${studentCompletion(s)}%</b></div>${Object.entries(D.subjects).map(([id,sub])=>{const p=(s.progress||[]).find(x=>x.subject_id===id)||{};return `<div class="row"><span>${sub.short}</span><span>${p.exercises_done||0} ejercicios · ${pct(p.correct_answers||0,p.exercises_done||0)}% aciertos</span></div>`}).join('')}</div>`).join('')||'<div class="c s12">No hay datos de seguimiento todavía.</div>'}</div>`;
+ return `<h2>Seguimiento académico</h2><div class="grid">${sts.map(s=>`<div class="c s6"><div class="row"><b>${esc(s.full_name)}</b><b>${studentCompletion(s)}%</b></div>${Object.entries(D.subjects).map(([id,sub])=>{const p=(s.progress||[]).find(x=>x.subject_id===id)||{};return `<div class="row"><span>${sub.short}</span><span>${p.exercises_done||0} ejercicios · ${pct(p.correct_answers||0,p.exercises_done||0)}% aciertos</span></div>`}).join('')}</div>`).join('')||'<div class="c s12">No hay datos de seguimiento todavía.</div>'}</div>`;
 }
 function teacherSubjectsPage(){return `<h2>Materias</h2><div class="grid">${Object.entries(D.subjects).map(([id,s])=>`<div class="c s6"><span class="badge">${s.short}</span><h3>${s.name}</h3><p class="muted">${s.description}</p><div class="row"><span>Ejercicios</span><b>${exBySubject(id).length}</b></div><div class="row"><span>Unidades</span><b>${s.units.length}</b></div></div>`).join('')}</div>`}
+
+function adminHome(){
+ const P=app.admin.profiles,G=app.admin.groups,PR=app.admin.progress;
+ const teachers=P.filter(p=>p.role==='teacher').length,students=P.filter(p=>p.role==='student').length,admins=P.filter(p=>p.role==='admin').length;
+ const done=PR.reduce((a,p)=>a+(p.exercises_done||0),0),correct=PR.reduce((a,p)=>a+(p.correct_answers||0),0);
+ return `<section class="hero"><h1>Panel administrador</h1><p>Visibilidad completa de docentes, alumnos, grupos y avance en todo CodeFun.</p></section>
+ <div class="grid">
+   <div class="c s3"><div class="muted">Docentes</div><div class="metric">${teachers}</div></div>
+   <div class="c s3"><div class="muted">Alumnos</div><div class="metric">${students}</div></div>
+   <div class="c s3"><div class="muted">Grupos</div><div class="metric">${G.length}</div></div>
+   <div class="c s3"><div class="muted">Admins</div><div class="metric">${admins}</div></div>
+   <div class="c s6"><div class="muted">Ejercicios respondidos (sistema)</div><div class="metric">${done}</div></div>
+   <div class="c s6"><div class="muted">Precisión global</div><div class="metric">${pct(correct,done)}%</div></div>
+ </div>`;
+}
+function groupNameFor(gid){return app.admin.groups.find(g=>g.id===gid)?.name||''}
+function studentGroupOf(uid){const m=app.admin.members.find(x=>x.student_id===uid);return m?app.admin.groups.find(g=>g.id===m.group_id):null}
+function adminUsersPage(){
+ const roles=[['admin','Administradores'],['teacher','Docentes'],['student','Alumnos']];
+ return `<h2>Cuentas</h2><p class="muted">Cambia el rol de cualquier cuenta. Los cambios se aplican de inmediato.</p>
+ ${roles.map(([r,label])=>{
+   const rows=app.admin.profiles.filter(p=>p.role===r);
+   return `<h3 style="margin-top:22px">${label} <span class="muted">(${rows.length})</span></h3>
+   <div class="c"><table class="table"><thead><tr><th>Nombre</th><th>Usuario</th>${r==='student'?'<th>Grupo</th>':''}<th>Rol</th><th></th></tr></thead><tbody>
+   ${rows.map(p=>`<tr>
+     <td>${esc(p.full_name||'—')}</td>
+     <td>${esc(p.username||'—')}</td>
+     ${r==='student'?`<td>${esc(studentGroupOf(p.id)?.name||'Sin grupo')}</td>`:''}
+     <td><select data-role-user="${p.id}">
+       <option value="student" ${p.role==='student'?'selected':''}>Alumno</option>
+       <option value="teacher" ${p.role==='teacher'?'selected':''}>Docente</option>
+       <option value="admin" ${p.role==='admin'?'selected':''}>Admin</option>
+     </select></td>
+     <td><button class="btn ghost" data-reset-pass="${p.id}" data-reset-name="${esc(p.full_name||p.username||'')}">Contraseña</button></td>
+   </tr>`).join('')||`<tr><td colspan="5" class="muted">Sin cuentas.</td></tr>`}
+   </tbody></table></div>`;
+ }).join('')}`;
+}
+function adminGroupsPage(){
+ const G=app.admin.groups;
+ return `<h2>Grupos</h2><p class="muted">Todos los grupos creados por cualquier docente.</p>
+ <div class="c"><table class="table"><thead><tr><th>Grupo</th><th>Código</th><th>Docente</th><th>Ciclo</th><th>Alumnos</th><th></th></tr></thead><tbody>
+ ${G.map(g=>{
+   const teacher=app.admin.profiles.find(p=>p.id===g.teacher_id);
+   const count=app.admin.members.filter(m=>m.group_id===g.id).length;
+   return `<tr><td>${esc(g.name)}</td><td>${esc(g.code)}</td><td>${esc(teacher?.full_name||'—')}</td><td>${esc(g.school_year||'—')}</td><td>${count}</td><td><button class="btn ghost" data-delete-group="${g.id}">Eliminar</button></td></tr>`;
+ }).join('')||`<tr><td colspan="6" class="muted">Aún no hay grupos.</td></tr>`}
+ </tbody></table></div>`;
+}
+async function changeUserRole(id,role){
+ if(!confirm('¿Cambiar el rol de esta cuenta a "'+roleLabel(role)+'"?'))return render();
+ const {error}=await sb.from('profiles').update({role}).eq('id',id);
+ if(error){alert(error.message);return render()}
+ await loadAdminData();render();
+}
+async function deleteGroup(id){
+ if(!confirm('¿Eliminar este grupo? Los alumnos inscritos perderán su vínculo con él.'))return;
+ const {error}=await sb.from('school_groups').delete().eq('id',id);
+ if(error)return alert(error.message);
+ await loadAdminData();render();
+}
+function showResetPasswordModal(userId,name){
+ el.insertAdjacentHTML('beforeend',`<div class="modal" id="modal"><div class="modal-card">
+   <div class="row"><h3>Nueva contraseña</h3><button class="btn ghost" id="closeModal" type="button">Cerrar</button></div>
+   <p class="muted">Cuenta: <b>${esc(name)}</b>. Comparte la nueva contraseña con la persona por un medio seguro.</p>
+   <form id="resetPassForm">
+     <div class="field"><label>Contraseña nueva</label><input name="new_password" type="text" required minlength="6" placeholder="Mínimo 6 caracteres"></div>
+     <button class="btn block" style="margin-top:8px">Guardar contraseña</button>
+   </form>
+   <div id="resetPassMsg"></div>
+ </div></div>`);
+ document.getElementById('closeModal').onclick=()=>document.getElementById('modal').remove();
+ document.getElementById('resetPassForm').onsubmit=async(e)=>{
+   e.preventDefault();
+   const new_password=new FormData(e.target).get('new_password');
+   const btn=e.target.querySelector('button');btn.disabled=true;btn.textContent='Guardando...';
+   const {data,error}=await sb.functions.invoke('admin-reset-password',{body:{user_id:userId,new_password}});
+   if(error||data?.error){
+     document.getElementById('resetPassMsg').innerHTML=`<div class="notice error">${esc(data?.error||error.message)}</div>`;
+     btn.disabled=false;btn.textContent='Guardar contraseña';return;
+   }
+   document.getElementById('resetPassMsg').innerHTML=`<div class="notice">Contraseña actualizada.</div>`;
+   setTimeout(()=>document.getElementById('modal')?.remove(),1200);
+ };
+}
 function studentDetail(id){
  const s=(app.mode==='demo'?demoStudents():app.students).find(x=>x.id===id);if(!s)return;
- el.insertAdjacentHTML('beforeend',`<div class="modal" id="modal"><div class="modal-card"><div class="row"><h3>${esc(s.full_name)}</h3><button class="btn ghost" id="closeModal">Cerrar</button></div><div class="muted">${esc(s.control_number||'')}</div><div class="row"><span>Avance total</span><b>${studentCompletion(s)}%</b></div><div class="row"><span>Precisión general</span><b>${studentAvg(s)}%</b></div>${Object.entries(D.subjects).map(([sid,sub])=>{const p=(s.progress||[]).find(x=>x.subject_id===sid)||{};return `<div class="c" style="margin-top:10px"><b>${sub.name}</b><div class="row"><span>Ejercicios</span><b>${p.exercises_done||0}</b></div><div class="row"><span>Aciertos</span><b>${pct(p.correct_answers||0,p.exercises_done||0)}%</b></div><div class="row"><span>XP</span><b>${p.xp||0}</b></div></div>`}).join('')}</div></div>`);
+ el.insertAdjacentHTML('beforeend',`<div class="modal" id="modal"><div class="modal-card"><div class="row"><h3>${esc(s.full_name)}</h3><button class="btn ghost" id="closeModal">Cerrar</button></div><div class="row"><span>Avance total</span><b>${studentCompletion(s)}%</b></div><div class="row"><span>Precisión general</span><b>${studentAvg(s)}%</b></div>${Object.entries(D.subjects).map(([sid,sub])=>{const p=(s.progress||[]).find(x=>x.subject_id===sid)||{};return `<div class="c" style="margin-top:10px"><b>${sub.name}</b><div class="row"><span>Ejercicios</span><b>${p.exercises_done||0}</b></div><div class="row"><span>Aciertos</span><b>${pct(p.correct_answers||0,p.exercises_done||0)}%</b></div><div class="row"><span>XP</span><b>${p.xp||0}</b></div></div>`}).join('')}</div></div>`);
  document.getElementById('closeModal').onclick=()=>document.getElementById('modal').remove();
 }
-async function createGroup(){
+function randomGroupCode(){
+ const chars='ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+ let s='';for(let i=0;i<6;i++)s+=chars[Math.floor(Math.random()*chars.length)];
+ return s;
+}
+function showCreateGroupModal(){
  if(app.mode==='demo')return alert('En modo demo el grupo PB3102 ya está creado. Con Supabase podrás crear grupos reales.');
- const name=prompt('Nombre del grupo (ej. Programación 3102):');if(!name)return;
- const year=prompt('Ciclo escolar (ej. 2026-2027):')||'';
- const code=(prompt('Código de acceso (ej. PB3102):')||'').trim().toUpperCase();if(!code)return;
- const {error}=await sb.from('school_groups').insert({name,code,school_year:year,teacher_id:app.profile.id});
- if(error)return alert(error.message);await refreshCloud();render();
+ el.insertAdjacentHTML('beforeend',`<div class="modal" id="modal"><div class="modal-card">
+   <div class="row"><h3>Crear grupo</h3><button class="btn ghost" id="closeModal" type="button">Cerrar</button></div>
+   <form id="createGroupForm">
+     <div class="field"><label>Nombre del grupo</label><input name="name" required placeholder="Ej. Programación 3102"></div>
+     <div class="field"><label>Ciclo escolar</label><input name="school_year" placeholder="Ej. 2026-2027"></div>
+     <div class="field">
+       <div class="login-label-row"><label>Código de acceso</label><button type="button" class="forgot-link" id="genCode">Generar</button></div>
+       <input name="code" required maxlength="12" placeholder="Ej. PB3102" value="${randomGroupCode()}">
+     </div>
+     <button class="btn block" style="margin-top:8px">Crear grupo</button>
+   </form>
+ </div></div>`);
+ document.getElementById('closeModal').onclick=()=>document.getElementById('modal').remove();
+ document.getElementById('genCode').onclick=()=>{document.querySelector('#createGroupForm input[name="code"]').value=randomGroupCode()};
+ document.getElementById('createGroupForm').onsubmit=async(e)=>{
+   e.preventDefault();const f=new FormData(e.target);
+   const name=f.get('name'),year=f.get('school_year')||'',code=String(f.get('code')||'').trim().toUpperCase();
+   if(!code)return;
+   const {error}=await sb.from('school_groups').insert({name,code,school_year:year,teacher_id:app.profile.id});
+   if(error)return alert(error.message);
+   document.getElementById('modal')?.remove();
+   await refreshCloud();render();
+ };
 }
 async function joinGroup(e){
  e.preventDefault();const code=new FormData(e.target).get('code');
@@ -380,18 +621,24 @@ async function joinGroup(e){
 function wire(){
  document.querySelectorAll('[data-sub]').forEach(x=>x.onclick=()=>{app.subject=x.dataset.sub;app.view='practice';render()});
  const sw=document.getElementById('switchSub');if(sw)sw.onclick=()=>{app.subject=app.subject==='python'?'logic':'python';render()};
- document.querySelectorAll('[data-topic]').forEach(x=>x.onclick=()=>startTopic(x.dataset.topic));
+ document.querySelectorAll('[data-topic]').forEach(x=>x.onclick=()=>openTopic(x.dataset.topic));
  const jf=document.getElementById('joinForm');if(jf)jf.onsubmit=joinGroup;
- const ng=document.getElementById('newGroup');if(ng)ng.onclick=createGroup;
+ const ng=document.getElementById('newGroup');if(ng)ng.onclick=showCreateGroupModal;
  document.querySelectorAll('[data-student]').forEach(x=>x.onclick=()=>studentDetail(x.dataset.student));
+ document.querySelectorAll('[data-role-user]').forEach(x=>x.onchange=()=>changeUserRole(x.dataset.roleUser,x.value));
+ document.querySelectorAll('[data-delete-group]').forEach(x=>x.onclick=()=>deleteGroup(x.dataset.deleteGroup));
+ document.querySelectorAll('[data-reset-pass]').forEach(x=>x.onclick=()=>showResetPasswordModal(x.dataset.resetPass,x.dataset.resetName));
 }
 function render(){
  if(!app.profile)return renderAuth('login');
  if(app.session)return renderExercise();
  let c='';
- if(app.profile.role==='teacher'){
+ if(app.profile.role==='admin'){
+   if(app.view==='admin')c=adminHome();else if(app.view==='adminUsers')c=adminUsersPage();else if(app.view==='adminGroups')c=adminGroupsPage();else c=teacherSubjectsPage();
+ }else if(app.profile.role==='teacher'){
    if(app.view==='teacher')c=teacherHome();else if(app.view==='groups')c=groupsPage();else if(app.view==='students')c=studentsPage();else if(app.view==='tracking')c=trackingPage();else c=teacherSubjectsPage();
  }else{
+   if(app.lesson)return lessonPage();
    if(app.view==='home')c=studentHome();else if(app.view==='subjects')c=subjectsPage();else if(app.view==='practice')c=practicePage();else if(app.view==='grades')c=gradesPage();else if(app.view==='group')c=groupPage();else c=profilePage();
  }
  layout(c);wire();
@@ -402,7 +649,7 @@ async function init(){
    if(session)await loadCloudSession(session);
    sb.auth.onAuthStateChange((_event,session)=>{if(!session){app.user=null;app.profile=null;renderAuth('login')}});
  }else{
-   const d=demoState();if(d.role){app.user={id:'demo',email:d.role==='teacher'?'docente@demo.com':'alumno@demo.com'};app.profile={id:'demo',full_name:d.name||'Usuario Demo',control_number:d.control||'232500001',role:d.role};app.view=d.role==='teacher'?'teacher':'home';if(d.role==='teacher')app.students=demoStudents()}
+   const d=demoState();if(d.role){app.user={id:'demo',username:d.username||(d.role==='teacher'?'docente':'alumno')};app.profile={id:'demo',full_name:d.name||'Usuario Demo',username:d.username,role:d.role};app.view=d.role==='teacher'?'teacher':'home';if(d.role==='teacher')app.students=demoStudents()}
  }
  render();
 }
