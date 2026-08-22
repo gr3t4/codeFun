@@ -18,6 +18,11 @@ alter table public.profiles add column if not exists username text;
 create unique index if not exists profiles_username_lower_idx
   on public.profiles (lower(username)) where username is not null;
 
+-- Gamificación: racha de días consecutivos practicando.
+alter table public.profiles add column if not exists streak_current integer not null default 0;
+alter table public.profiles add column if not exists streak_best integer not null default 0;
+alter table public.profiles add column if not exists streak_last_date date;
+
 create table if not exists public.school_groups (
   id uuid primary key default gen_random_uuid(),
   name text not null,
@@ -132,6 +137,20 @@ begin
       xp=student_progress.xp+excluded.xp,
       last_activity=now(),
       updated_at=now();
+
+  update public.profiles
+  set streak_current = case
+        when streak_last_date = current_date then streak_current
+        when streak_last_date = current_date - 1 then streak_current + 1
+        else 1
+      end,
+      streak_best = greatest(streak_best, case
+        when streak_last_date = current_date then streak_current
+        when streak_last_date = current_date - 1 then streak_current + 1
+        else 1
+      end),
+      streak_last_date = current_date
+  where id = auth.uid();
 end;
 $$;
 
@@ -298,6 +317,38 @@ grant execute on function public.record_attempt(text,text,text,text,boolean,inte
 grant execute on function public.is_teacher_of_group(uuid) to authenticated;
 grant execute on function public.is_member_of_group(uuid) to authenticated;
 grant execute on function public.is_admin() to authenticated;
+
+-- Tabla de posiciones de un grupo (nombre + XP total). Solo puede consultarla
+-- alguien que sea alumno o docente de ese grupo (o admin). No expone las
+-- filas crudas de student_progress, solo el total agregado por alumno.
+create or replace function public.group_leaderboard(p_group_id uuid)
+returns table(student_id uuid, full_name text, xp bigint)
+language plpgsql
+security definer
+set search_path = public
+stable
+as $$
+begin
+  if not (
+    public.is_member_of_group(p_group_id)
+    or public.is_teacher_of_group(p_group_id)
+    or public.is_admin()
+  ) then
+    raise exception 'No autorizado.';
+  end if;
+
+  return query
+    select p.id, p.full_name, coalesce(sum(sp.xp),0)::bigint
+    from public.group_members gm
+    join public.profiles p on p.id = gm.student_id
+    left join public.student_progress sp on sp.student_id = p.id
+    where gm.group_id = p_group_id
+    group by p.id, p.full_name
+    order by 3 desc;
+end;
+$$;
+
+grant execute on function public.group_leaderboard(uuid) to authenticated;
 
 -- IMPORTANTE:
 -- Por seguridad, el registro web siempre crea alumnos.

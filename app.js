@@ -10,9 +10,56 @@ function usernameToEmail(u){
  const v=String(u||'').trim().toLowerCase();
  return v.includes('@')?v:v+USERNAME_DOMAIN;
 }
-let app={mode:hasSupabase?'cloud':'demo',user:null,profile:null,view:'home',subject:'python',session:null,lesson:null,groups:[],students:[],progress:[],attempts:[],admin:{profiles:[],groups:[],members:[],progress:[]}};
+let app={mode:hasSupabase?'cloud':'demo',user:null,profile:null,view:'home',subject:'python',session:null,lesson:null,groups:[],students:[],progress:[],attempts:[],leaderboard:[],admin:{profiles:[],groups:[],members:[],progress:[]}};
+
+const LEVELS=[
+ {name:'Novato',min:0},
+ {name:'Aprendiz',min:100},
+ {name:'Practicante',min:300},
+ {name:'Competente',min:600},
+ {name:'Avanzado',min:1000},
+ {name:'Experto',min:1500},
+ {name:'Maestro',min:2500}
+];
+function levelFor(xp){
+ let idx=0;
+ for(let i=0;i<LEVELS.length;i++)if(xp>=LEVELS[i].min)idx=i;
+ const cur=LEVELS[idx],next=LEVELS[idx+1];
+ return {name:cur.name,number:idx+1,xp,min:cur.min,next,progress:next?pct(xp-cur.min,next.min-cur.min):100};
+}
+const BADGES=[
+ {id:'first',name:'Primer paso',desc:'Responde tu primer ejercicio.',test:c=>c.done>=1},
+ {id:'ten',name:'En marcha',desc:'Responde 10 ejercicios.',test:c=>c.done>=10},
+ {id:'fifty',name:'Constante',desc:'Responde 50 ejercicios.',test:c=>c.done>=50},
+ {id:'hundred',name:'Imparable',desc:'Responde 100 ejercicios.',test:c=>c.done>=100},
+ {id:'streak3',name:'Racha de 3 días',desc:'Practica 3 días seguidos.',test:c=>c.streakBest>=3},
+ {id:'streak7',name:'Racha de 7 días',desc:'Practica 7 días seguidos.',test:c=>c.streakBest>=7},
+ {id:'accuracy',name:'Precisión de oro',desc:'90% de aciertos o más (mín. 20 ejercicios).',test:c=>c.done>=20&&pct(c.correct,c.done)>=90},
+ {id:'python',name:'Python dominado',desc:'Completa todos los ejercicios de Python.',test:c=>c.pythonDone>=c.pythonTotal&&c.pythonTotal>0},
+ {id:'logic',name:'Lógica dominada',desc:'Completa todos los ejercicios de Lógica.',test:c=>c.logicDone>=c.logicTotal&&c.logicTotal>0}
+];
+function badgeContext(){
+ let done=0,correct=0,streakBest=0;
+ const pythonTotal=exBySubject('python').length,logicTotal=exBySubject('logic').length;
+ let pythonDone=0,logicDone=0;
+ if(app.mode==='demo'){
+   const d=demoState();done=Object.keys(d.answers).length;correct=Object.values(d.answers).filter(a=>a.correct).length;
+   pythonDone=exBySubject('python').filter(e=>d.answers[e.id]).length;logicDone=exBySubject('logic').filter(e=>d.answers[e.id]).length;
+ }else{
+   done=app.progress.reduce((a,p)=>a+p.exercises_done,0);correct=app.progress.reduce((a,p)=>a+p.correct_answers,0);
+   streakBest=app.profile?.streak_best||0;
+   pythonDone=app.progress.find(p=>p.subject_id==='python')?.exercises_done||0;
+   logicDone=app.progress.find(p=>p.subject_id==='logic')?.exercises_done||0;
+ }
+ return {done,correct,streakBest,pythonDone,pythonTotal,logicDone,logicTotal};
+}
 
 function esc(s=''){return String(s).replace(/[&<>"']/g,m=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]))}
+function shuffled(arr){
+ const a=arr.slice();
+ for(let i=a.length-1;i>0;i--){const j=Math.floor(Math.random()*(i+1));[a[i],a[j]]=[a[j],a[i]]}
+ return a;
+}
 function pct(a,b){return b?Math.round(a/b*100):0}
 function demoState(){return JSON.parse(localStorage.getItem(DEMO_KEY)||'null')||{answers:{},xp:0,role:null,name:''}}
 function saveDemo(x){localStorage.setItem(DEMO_KEY,JSON.stringify(x))}
@@ -148,6 +195,8 @@ async function refreshCloud(){
  if(app.profile.role==='student'){
    let {data:p}=await sb.from('student_progress').select('*').eq('student_id',app.profile.id);app.progress=p||[];
    let {data:g}=await sb.from('group_members').select('group_id,school_groups(id,name,code,school_year)').eq('student_id',app.profile.id);app.groups=(g||[]).map(x=>x.school_groups).filter(Boolean);
+   let {data:prof}=await sb.from('profiles').select('*').eq('id',app.profile.id).single();if(prof)app.profile=prof;
+   if(app.groups[0]){const {data:lb}=await sb.rpc('group_leaderboard',{p_group_id:app.groups[0].id});app.leaderboard=lb||[]}else app.leaderboard=[];
  }else if(app.profile.role==='admin'){
    await loadAdminData();
  }else{
@@ -180,7 +229,7 @@ async function loadTeacherStudents(){
  app.students=(m||[]).map(x=>({group_id:x.group_id,...(x.profiles||{}),progress:prog.filter(p=>p.student_id===x.student_id)}));
 }
 function nav(){
- const student=[['home','Inicio'],['subjects','Materias'],['practice','Práctica'],['grades','Calificaciones'],['group','Mi grupo'],['profile','Mi perfil']];
+ const student=[['home','Inicio'],['subjects','Materias'],['practice','Práctica'],['achievements','Logros'],['grades','Calificaciones'],['group','Mi grupo'],['profile','Mi perfil']];
  const teacher=[['teacher','Resumen'],['groups','Mis grupos'],['students','Alumnos'],['tracking','Seguimiento'],['teacherSubjects','Materias']];
  const admin=[['admin','Resumen'],['adminUsers','Cuentas'],['adminGroups','Grupos'],['teacherSubjects','Materias']];
  const role=app.profile?.role;
@@ -259,19 +308,22 @@ const ICON_PATHS={
  trending:'<path d="M4 16l5.2-5.5 3.6 3 6.2-6.8"/><path d="M15 6.5h4.5V11"/>',
  close:'<path d="M6 6l12 12M18 6 6 18"/>',
  menu:'<path d="M4 7h16M4 12h16M4 17h16"/>',
- more:'<circle cx="5" cy="12" r="1.6"/><circle cx="12" cy="12" r="1.6"/><circle cx="19" cy="12" r="1.6"/>'
+ more:'<circle cx="5" cy="12" r="1.6"/><circle cx="12" cy="12" r="1.6"/><circle cx="19" cy="12" r="1.6"/>',
+ trophy:'<path d="M7 4h10v4a5 5 0 0 1-10 0V4Z"/><path d="M7 5H4.5A2.5 2.5 0 0 0 7 9"/><path d="M17 5h2.5A2.5 2.5 0 0 1 17 9"/><path d="M12 13v3"/><path d="M9 20h6"/><path d="M10.5 16h3l.5 2h-4l.5-2Z"/>'
 };
 function svgIcon(name){return `<svg class="icon" viewBox="0 0 24 24">${ICON_PATHS[name]||''}</svg>`}
 function navIcon(v){
- const icons={home:'home',subjects:'grid',practice:'code',grades:'star',group:'users',profile:'user',teacher:'home',groups:'grid',students:'users',tracking:'trending',teacherSubjects:'code',admin:'home',adminUsers:'users',adminGroups:'grid'};
+ const icons={home:'home',subjects:'grid',practice:'code',achievements:'trophy',grades:'star',group:'users',profile:'user',teacher:'home',groups:'grid',students:'users',tracking:'trending',teacherSubjects:'code',admin:'home',adminUsers:'users',adminGroups:'grid'};
  return svgIcon(icons[v]||'grid');
 }
 function studentHome(){
  let total=0,done=0,correct=0,xp=0;
  if(app.mode==='demo'){const d=demoState();total=260;done=Object.keys(d.answers).length;correct=Object.values(d.answers).filter(a=>a.correct).length;xp=d.xp||0}
  else {total=260;done=app.progress.reduce((a,p)=>a+p.exercises_done,0);correct=app.progress.reduce((a,p)=>a+p.correct_answers,0);xp=app.progress.reduce((a,p)=>a+p.xp,0)}
+ const lvl=levelFor(xp);
+ const streak=app.mode==='demo'?null:(app.profile?.streak_current||0);
  return `<section class="hero"><h1>Hola, ${esc((app.profile.full_name||'Alumno').split(' ')[0])} 👋</h1><p>Revisa tus materias, continúa practicando y consulta tu avance académico.</p></section>
- <div class="grid"><div class="c s3"><div class="muted">Ejercicios realizados</div><div class="metric">${done}</div></div><div class="c s3"><div class="muted">Precisión</div><div class="metric">${pct(correct,done)}%</div></div><div class="c s3"><div class="muted">XP</div><div class="metric">${xp}</div></div><div class="c s3"><div class="muted">Grupo</div><div class="metric" style="font-size:19px">${esc(app.groups[0]?.name||'Sin grupo')}</div></div>${subjectsCards()}</div>`;
+ <div class="grid"><div class="c s3"><div class="muted">Ejercicios realizados</div><div class="metric">${done}</div></div><div class="c s3"><div class="muted">Precisión</div><div class="metric">${pct(correct,done)}%</div></div><div class="c s3"><div class="muted">Nivel ${lvl.number} · ${xp} XP</div><div class="metric" style="font-size:19px">${esc(lvl.name)}</div></div><div class="c s3"><div class="muted">${streak===null?'Grupo':'Racha'}</div><div class="metric" style="font-size:19px">${streak===null?esc(app.groups[0]?.name||'Sin grupo'):streak+' día'+(streak===1?'':'s')}</div></div>${subjectsCards()}</div>`;
 }
 function subjectsPage(){return `<h2>Mis materias</h2><p class="muted">Elige una materia para consultar sus unidades y practicar.</p><div class="grid">${subjectsCards()}</div>`}
 function practicePage(){
@@ -365,10 +417,11 @@ function lessonPage(){
  document.getElementById('exitLesson').onclick=()=>{app.lesson=null;app.view='practice';render()};
  document.getElementById('startExercises').onclick=()=>{app.lesson=null;startTopic(topic)};
 }
-function startTopic(topic){const ids=D.exercises.filter(e=>e.subject===app.subject&&e.topic===topic).map(e=>e.id);app.session={ids,index:0,topic};renderExercise()}
+function startTopic(topic){const ids=shuffled(D.exercises.filter(e=>e.subject===app.subject&&e.topic===topic).map(e=>e.id));app.session={ids,index:0,topic};renderExercise()}
 function renderExercise(){
  const ss=app.session,ex=D.exercises.find(e=>e.id===ss.ids[ss.index]);
  if(!ex){app.session=null;app.view='practice';return render()}
+ const opts=shuffled(ex.options);
  const prog=pct(ss.index,ss.ids.length);
  layout(`<div class="exercise">
    <div class="exercise-top">
@@ -383,7 +436,7 @@ function renderExercise(){
      <div class="exercise-meta"><span class="badge">${esc(ex.topic)}</span><span class="muted">${ex.id}</span></div>
      <div class="q">${esc(ex.prompt)}</div>
      ${ex.code?`<div class="code">${esc(ex.code)}</div>`:''}
-     <div class="opts">${ex.options.map((o,i)=>`<button class="opt" data-answer="${encodeURIComponent(o)}"><span class="option-key">${String.fromCharCode(65+i)}</span><span>${esc(o)}</span></button>`).join('')}</div>
+     <div class="opts">${opts.map((o,i)=>`<button class="opt" data-answer="${encodeURIComponent(o)}"><span class="option-key">${String.fromCharCode(65+i)}</span><span>${esc(o)}</span></button>`).join('')}</div>
      <div id="feed"></div>
    </div>
  </div>`);
@@ -461,6 +514,39 @@ function gradesPage(){
    let done=0,c=0;if(app.mode==='demo'){const d=demoState(),ids=exBySubject(id).map(x=>x.id);done=ids.filter(x=>d.answers[x]).length;c=ids.filter(x=>d.answers[x]?.correct).length}else{const p=app.progress.find(x=>x.subject_id===id);done=p?.exercises_done||0;c=p?.correct_answers||0}
    return `<div class="c s6"><h3>${s.name}</h3><div class="metric">${done?pct(c,done):'—'}</div><div class="muted">porcentaje de aciertos · ${done} intentos registrados</div></div>`}).join('')}</div>`;
 }
+function achievementsPage(){
+ const ctx=badgeContext();
+ const totalXp=app.mode==='demo'?(demoState().xp||0):app.progress.reduce((a,p)=>a+p.xp,0);
+ const lvl=levelFor(totalXp);
+ const streakCur=app.mode==='demo'?null:(app.profile?.streak_current||0);
+ const streakBest=app.mode==='demo'?null:(app.profile?.streak_best||0);
+ const earned=BADGES.filter(b=>b.test(ctx)),locked=BADGES.filter(b=>!b.test(ctx));
+ const lb=app.mode==='demo'?[]:app.leaderboard,meId=app.mode==='demo'?null:app.profile.id;
+ return `<h2>Logros</h2>
+ <div class="grid">
+   <div class="c s6">
+     <div class="row"><span class="muted">Nivel ${lvl.number}</span><b>${esc(lvl.name)}</b></div>
+     <div class="progress" style="margin:8px 0"><span style="width:${lvl.progress}%"></span></div>
+     <div class="muted small">${lvl.next?`${lvl.xp-lvl.min} / ${lvl.next.min-lvl.min} XP hacia ${esc(lvl.next.name)}`:'Nivel máximo alcanzado'}</div>
+   </div>
+   <div class="c s6">
+     <div class="row"><span class="muted">Racha actual</span><b>${streakCur===null?'—':streakCur+' día'+(streakCur===1?'':'s')}</b></div>
+     <div class="row"><span class="muted">Mejor racha</span><b>${streakBest===null?'—':streakBest+' día'+(streakBest===1?'':'s')}</b></div>
+     ${streakCur===null?'<div class="muted small">Disponible al conectar Supabase.</div>':''}
+   </div>
+ </div>
+
+ <h3 style="margin-top:22px">Insignias <span class="muted">(${earned.length}/${BADGES.length})</span></h3>
+ <div class="grid">
+   ${earned.map(b=>`<div class="c s4"><span class="badge green">Obtenida</span><h3 style="margin-top:8px">${esc(b.name)}</h3><p class="muted">${esc(b.desc)}</p></div>`).join('')}
+   ${locked.map(b=>`<div class="c s4" style="opacity:.55"><span class="badge">Bloqueada</span><h3 style="margin-top:8px">${esc(b.name)}</h3><p class="muted">${esc(b.desc)}</p></div>`).join('')}
+ </div>
+
+ <h3 style="margin-top:22px">Tabla de posiciones${app.groups[0]?` · ${esc(app.groups[0].name)}`:''}</h3>
+ ${app.mode==='demo'?`<div class="c">Disponible al conectar Supabase y unirte a un grupo.</div>`
+   :!app.groups[0]?`<div class="c">Únete a un grupo para ver la tabla de posiciones.</div>`
+   :`<div class="c"><table class="table"><thead><tr><th>#</th><th>Alumno</th><th>XP</th></tr></thead><tbody>${lb.map((r,i)=>`<tr${r.student_id===meId?' style="font-weight:800"':''}><td>${i+1}</td><td>${esc(r.full_name)}${r.student_id===meId?' (tú)':''}</td><td>${r.xp}</td></tr>`).join('')||'<tr><td colspan="3" class="muted">Aún no hay datos.</td></tr>'}</tbody></table></div>`}`;
+}
 function groupPage(){
  const g=app.groups[0];
  return `<h2>Mi grupo</h2>${g?`<div class="c"><span class="badge">Inscrito</span><h3>${esc(g.name)}</h3><div class="row"><span>Código</span><b>${esc(g.code)}</b></div><div class="row"><span>Ciclo</span><b>${esc(g.school_year||'—')}</b></div></div>`:`<div class="c"><h3>Aún no estás en un grupo</h3><p class="muted">Escribe el código que te proporcionó tu docente.</p><form id="joinForm"><div class="field"><input name="code" required placeholder="Ej. PB3102"></div><button class="btn">Unirme al grupo</button></form></div>`}`;
@@ -481,15 +567,39 @@ function studentAvg(s){let done=(s.progress||[]).reduce((a,p)=>a+(p.exercises_do
 function studentCompletion(s){let done=(s.progress||[]).reduce((a,p)=>a+(p.exercises_done||0),0);return Math.min(100,pct(done,260))}
 function groupsPage(){
  const gs=app.mode==='demo'?[{id:'g1',name:'Programación 3102',code:'PB3102',school_year:'2026-2027'}]:app.groups;
- return `<div class="row"><div><h2>Mis grupos</h2><div class="muted">Crea un grupo y comparte su código con los alumnos.</div></div><button class="btn" id="newGroup">+ Crear grupo</button></div><div class="grid">${gs.map(g=>`<div class="c s6"><span class="badge">${esc(g.code)}</span><h3>${esc(g.name)}</h3><div class="row"><span>Ciclo escolar</span><b>${esc(g.school_year||'—')}</b></div><div class="muted">Los alumnos se unen usando este código.</div></div>`).join('')||'<div class="c s12">Aún no has creado grupos.</div>'}</div>`;
+ const countOf=gid=>app.mode==='demo'?demoStudents().length:app.students.filter(s=>s.group_id===gid).length;
+ return `<div class="row"><div><h2>Mis grupos</h2><div class="muted">Crea un grupo y comparte su código con los alumnos.</div></div><button class="btn" id="newGroup">+ Crear grupo</button></div><div class="grid">${gs.map(g=>`<div class="c s6"><span class="badge">${esc(g.code)}</span><h3>${esc(g.name)}</h3><div class="row"><span>Ciclo escolar</span><b>${esc(g.school_year||'—')}</b></div><div class="row"><span>Alumnos inscritos</span><b>${countOf(g.id)}</b></div><div class="muted">Los alumnos se unen usando este código.</div></div>`).join('')||'<div class="c s12">Aún no has creado grupos.</div>'}</div>`;
+}
+function studentsByGroup(sts){
+ const map={};
+ sts.forEach(s=>{const gid=s.group_id||'none';(map[gid]=map[gid]||[]).push(s)});
+ return map;
+}
+function teacherGroupLabel(gid){
+ if(gid==='none')return 'Sin grupo asignado';
+ const g=app.groups.find(x=>x.id===gid);
+ return g?`${g.name} · ${g.code}`:'Grupo';
 }
 function studentsPage(){
  const sts=app.mode==='demo'?demoStudents():app.students;
- return `<h2>Alumnos</h2><div class="c"><table class="table"><thead><tr><th>Alumno</th><th>Avance</th><th>Aciertos</th><th>Estado</th><th></th></tr></thead><tbody>${sts.map(s=>`<tr><td>${esc(s.full_name)}</td><td>${studentCompletion(s)}%</td><td>${studentAvg(s)}%</td><td><span class="badge ${studentAvg(s)<60?'redb':studentAvg(s)<75?'amber':'green'}">${studentAvg(s)<60?'Atención':studentAvg(s)<75?'En proceso':'Buen avance'}</span></td><td><button class="btn ghost" data-student="${s.id}">Ver</button></td></tr>`).join('')}</tbody></table></div>`;
+ if(app.mode==='demo')return `<h2>Alumnos</h2><h3>Programación 3102 <span class="muted">(${sts.length})</span></h3><div class="c"><table class="table"><thead><tr><th>Alumno</th><th>Avance</th><th>Aciertos</th><th>Estado</th><th></th></tr></thead><tbody>${sts.map(s=>`<tr><td>${esc(s.full_name)}</td><td>${studentCompletion(s)}%</td><td>${studentAvg(s)}%</td><td><span class="badge ${studentAvg(s)<60?'redb':studentAvg(s)<75?'amber':'green'}">${studentAvg(s)<60?'Atención':studentAvg(s)<75?'En proceso':'Buen avance'}</span></td><td><button class="btn ghost" data-student="${s.id}">Ver</button></td></tr>`).join('')}</tbody></table></div>`;
+ const byGroup=studentsByGroup(sts);
+ const gids=Object.keys(byGroup);
+ return `<h2>Alumnos</h2><p class="muted">${sts.length} alumno${sts.length===1?'':'s'} en ${app.groups.length} grupo${app.groups.length===1?'':'s'}.</p>
+ ${gids.map(gid=>{
+   const list=byGroup[gid];
+   return `<h3 style="margin-top:22px">${esc(teacherGroupLabel(gid))} <span class="muted">(${list.length})</span></h3>
+   <div class="c"><table class="table"><thead><tr><th>Alumno</th><th>Avance</th><th>Aciertos</th><th>Estado</th><th></th></tr></thead><tbody>${list.map(s=>`<tr><td>${esc(s.full_name)}</td><td>${studentCompletion(s)}%</td><td>${studentAvg(s)}%</td><td><span class="badge ${studentAvg(s)<60?'redb':studentAvg(s)<75?'amber':'green'}">${studentAvg(s)<60?'Atención':studentAvg(s)<75?'En proceso':'Buen avance'}</span></td><td><button class="btn ghost" data-student="${s.id}">Ver</button></td></tr>`).join('')}</tbody></table></div>`;
+ }).join('')||'<div class="c">Aún no tienes alumnos inscritos en ningún grupo.</div>'}`;
 }
 function trackingPage(){
  const sts=app.mode==='demo'?demoStudents():app.students;
- return `<h2>Seguimiento académico</h2><div class="grid">${sts.map(s=>`<div class="c s6"><div class="row"><b>${esc(s.full_name)}</b><b>${studentCompletion(s)}%</b></div>${Object.entries(D.subjects).map(([id,sub])=>{const p=(s.progress||[]).find(x=>x.subject_id===id)||{};return `<div class="row"><span>${sub.short}</span><span>${p.exercises_done||0} ejercicios · ${pct(p.correct_answers||0,p.exercises_done||0)}% aciertos</span></div>`}).join('')}</div>`).join('')||'<div class="c s12">No hay datos de seguimiento todavía.</div>'}</div>`;
+ const card=s=>`<div class="c s6"><div class="row"><b>${esc(s.full_name)}</b><b>${studentCompletion(s)}%</b></div>${Object.entries(D.subjects).map(([id,sub])=>{const p=(s.progress||[]).find(x=>x.subject_id===id)||{};return `<div class="row"><span>${sub.short}</span><span>${p.exercises_done||0} ejercicios · ${pct(p.correct_answers||0,p.exercises_done||0)}% aciertos</span></div>`}).join('')}</div>`;
+ if(app.mode==='demo')return `<h2>Seguimiento académico</h2><div class="grid">${sts.map(card).join('')}</div>`;
+ const byGroup=studentsByGroup(sts);
+ const gids=Object.keys(byGroup);
+ return `<h2>Seguimiento académico</h2>
+ ${gids.map(gid=>`<h3 style="margin-top:22px">${esc(teacherGroupLabel(gid))} <span class="muted">(${byGroup[gid].length})</span></h3><div class="grid">${byGroup[gid].map(card).join('')}</div>`).join('')||'<div class="c">No hay datos de seguimiento todavía.</div>'}`;
 }
 function teacherSubjectsPage(){return `<h2>Materias</h2><div class="grid">${Object.entries(D.subjects).map(([id,s])=>`<div class="c s6"><span class="badge">${s.short}</span><h3>${s.name}</h3><p class="muted">${s.description}</p><div class="row"><span>Ejercicios</span><b>${exBySubject(id).length}</b></div><div class="row"><span>Unidades</span><b>${s.units.length}</b></div></div>`).join('')}</div>`}
 
@@ -639,7 +749,7 @@ function render(){
    if(app.view==='teacher')c=teacherHome();else if(app.view==='groups')c=groupsPage();else if(app.view==='students')c=studentsPage();else if(app.view==='tracking')c=trackingPage();else c=teacherSubjectsPage();
  }else{
    if(app.lesson)return lessonPage();
-   if(app.view==='home')c=studentHome();else if(app.view==='subjects')c=subjectsPage();else if(app.view==='practice')c=practicePage();else if(app.view==='grades')c=gradesPage();else if(app.view==='group')c=groupPage();else c=profilePage();
+   if(app.view==='home')c=studentHome();else if(app.view==='subjects')c=subjectsPage();else if(app.view==='practice')c=practicePage();else if(app.view==='achievements')c=achievementsPage();else if(app.view==='grades')c=gradesPage();else if(app.view==='group')c=groupPage();else c=profilePage();
  }
  layout(c);wire();
 }
