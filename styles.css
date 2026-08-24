@@ -121,6 +121,11 @@ h3{font-size:16px;font-weight:750}
 .exercise-meta{display:flex;align-items:center;justify-content:space-between;margin-bottom:10px}
 .q{font-size:21px;line-height:1.4;font-weight:750;margin:14px 0}
 .code{background:var(--dark);color:#eef1ff;padding:16px;border-radius:12px;white-space:pre-wrap;font:14px ui-monospace,SFMono-Regular,Menlo,monospace;line-height:1.55}
+.code-editor{width:100%;min-height:190px;background:var(--dark);color:#eef1ff;padding:16px;border-radius:12px;font:14px ui-monospace,SFMono-Regular,Menlo,monospace;line-height:1.55;border:1px solid var(--dark-line);resize:vertical;outline:none;white-space:pre;tab-size:4;margin-top:8px}
+.code-editor:focus{border-color:var(--pri-light)}
+.code-editor:disabled{opacity:.65}
+.test-results{margin-top:6px}
+.test-results .row{padding:9px 0}
 .opts{display:grid;gap:10px;margin:14px 0}
 .opt{
   display:flex;align-items:center;gap:12px;min-height:52px;font-size:15px;

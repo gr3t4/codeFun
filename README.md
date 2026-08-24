@@ -67,9 +67,10 @@ python3 -m http.server 8080
 Abre `http://127.0.0.1:8080`.
 
 ## Contenido
-- Programación Básica con Python: 136 ejercicios.
-- Lógica de Programación: 124 ejercicios.
-- Total: 260 ejercicios.
+- Programación Básica con Python: 257 ejercicios (136 de opción múltiple + 121
+  de código real, ejecutados con un compilador de Python en el navegador).
+- Lógica de Programación: 124 ejercicios de opción múltiple.
+- Total: 381 ejercicios.
 - PWA.
 
 
@@ -103,3 +104,22 @@ Abre `http://127.0.0.1:8080`.
   sus ejercicios.
 - Rediseño visual: paleta, iconos SVG propios y limpieza de CSS heredado.
 - PWA completa: iconos PNG, `apple-touch-icon`, caché con versionado real.
+
+## v1.5 — Gamificación, ejercicios de código real y correcciones de contenido
+- Gamificación: niveles por XP, insignias, racha de días consecutivos y tabla
+  de posiciones por grupo (panel "Logros").
+- Las opciones de respuesta y el orden de los ejercicios se mezclan en cada
+  sesión de práctica (antes el 84% de los ejercicios de Python tenía la
+  respuesta correcta siempre en la opción A).
+- Se reescribieron 100 ejercicios de Lógica de Programación que estaban
+  duplicados (algunos temas repetían literalmente el mismo ejercicio hasta
+  20 veces).
+- El docente ve a sus alumnos separados por grupo (antes era una lista plana
+  de todos sus grupos mezclados), y puede ver la lista de alumnos de cada
+  grupo desde "Mis grupos".
+- **Ejercicios de código real**: cada RA de Programación Básica con Python
+  (RA1.1 a RA2.2) tiene ~30 ejercicios donde el alumno escribe Python de
+  verdad y lo ejecuta con [Pyodide](https://pyodide.org) (Python compilado a
+  WebAssembly, corre 100% en el navegador — no hay backend de ejecución de
+  código). Incluye ejercicios de completar funciones, programas con `print()`
+  y depuración (corregir un error ya escrito).

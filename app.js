@@ -317,9 +317,9 @@ function navIcon(v){
  return svgIcon(icons[v]||'grid');
 }
 function studentHome(){
- let total=0,done=0,correct=0,xp=0;
- if(app.mode==='demo'){const d=demoState();total=260;done=Object.keys(d.answers).length;correct=Object.values(d.answers).filter(a=>a.correct).length;xp=d.xp||0}
- else {total=260;done=app.progress.reduce((a,p)=>a+p.exercises_done,0);correct=app.progress.reduce((a,p)=>a+p.correct_answers,0);xp=app.progress.reduce((a,p)=>a+p.xp,0)}
+ let done=0,correct=0,xp=0;
+ if(app.mode==='demo'){const d=demoState();done=Object.keys(d.answers).length;correct=Object.values(d.answers).filter(a=>a.correct).length;xp=d.xp||0}
+ else {done=app.progress.reduce((a,p)=>a+p.exercises_done,0);correct=app.progress.reduce((a,p)=>a+p.correct_answers,0);xp=app.progress.reduce((a,p)=>a+p.xp,0)}
  const lvl=levelFor(xp);
  const streak=app.mode==='demo'?null:(app.profile?.streak_current||0);
  return `<section class="hero"><h1>Hola, ${esc((app.profile.full_name||'Alumno').split(' ')[0])} 👋</h1><p>Revisa tus materias, continúa practicando y consulta tu avance académico.</p></section>
@@ -393,6 +393,26 @@ print(edad + 1)        # error: str + int
 # corrección:
 print(int(edad) + 1)</div>
      <p class="muted">Antes de ejecutar, lee línea por línea e imagina qué hace cada una.</p>`
+ },
+ 'Código: Variables y tipos':{
+   title:'Ahora vas a escribir código real',
+   body:`<p>En esta sección no eliges una opción: <b>escribes código de Python de verdad</b> y lo ejecutas con un compilador integrado en la página.</p>
+     <p>Cada ejercicio te da una función incompleta. Complétala, presiona <b>"Ejecutar código"</b> y verás si tu solución pasa las pruebas. Si algo falla, lee el valor esperado o el mensaje de error, corrige tu código y vuelve a intentarlo — puedes ejecutar tantas veces como quieras.</p>
+     <p class="muted">La primera vez que ejecutes código, el compilador tardará unos segundos en cargar. Después será instantáneo.</p>`
+ },
+ 'Código: Condicionales y ciclos':{
+   title:'Practica con código real: condicionales y ciclos',
+   body:`<p>Aquí combinarás <code>if/elif/else</code> y ciclos <code>for</code>/<code>while</code> dentro de funciones completas, ejecutadas por un compilador real de Python.</p>
+     <p>Algunos ejercicios piden completar una función que <b>regresa</b> un valor; otros piden escribir un programa que <b>imprime</b> resultados con <code>print()</code>. Lee bien el enunciado antes de escribir.</p>`
+ },
+ 'Código: Funciones':{
+   title:'Practica con código real: funciones',
+   body:`<p>Escribirás funciones completas: con parámetros, valores por defecto e incluso <b>recursión</b> (una función que se llama a sí misma). Tu código se ejecuta con un compilador real de Python integrado en la página.</p>`
+ },
+ 'Código: Listas y depuración':{
+   title:'Practica con código real: listas y depuración',
+   body:`<p>Trabajarás con listas (agregar, quitar, ordenar, filtrar) y también encontrarás ejercicios de <b>depuración</b>: se te da una función con un error ya escrito y tu tarea es corregirla para que pase las pruebas.</p>
+     <p class="muted">En los ejercicios de depuración, lee el comentario junto al error: te dice qué está mal.</p>`
  }
 };
 function openTopic(topic){
@@ -418,9 +438,134 @@ function lessonPage(){
  document.getElementById('startExercises').onclick=()=>{app.lesson=null;startTopic(topic)};
 }
 function startTopic(topic){const ids=shuffled(D.exercises.filter(e=>e.subject===app.subject&&e.topic===topic).map(e=>e.id));app.session={ids,index:0,topic};renderExercise()}
+
+let PYODIDE=null,PYODIDE_LOADING=null;
+const PYODIDE_CDN='https://cdn.jsdelivr.net/pyodide/v0.26.4/full/';
+function loadPyodideOnce(){
+ if(PYODIDE)return Promise.resolve(PYODIDE);
+ if(PYODIDE_LOADING)return PYODIDE_LOADING;
+ PYODIDE_LOADING=(async()=>{
+   if(!window.loadPyodide){
+     await new Promise((resolve,reject)=>{
+       const s=document.createElement('script');
+       s.src=PYODIDE_CDN+'pyodide.js';
+       s.onload=resolve;s.onerror=()=>reject(new Error('No se pudo cargar el compilador de Python. Revisa tu conexión e inténtalo de nuevo.'));
+       document.head.appendChild(s);
+     });
+   }
+   PYODIDE=await window.loadPyodide({indexURL:PYODIDE_CDN});
+   return PYODIDE;
+ })();
+ return PYODIDE_LOADING;
+}
+function cleanPyError(e){
+ const msg=String((e&&e.message)||e);
+ const lines=msg.trim().split('\n').filter(Boolean);
+ return lines[lines.length-1].slice(0,300);
+}
+async function runCodeExercise(ex,code){
+ let py;
+ try{py=await loadPyodideOnce()}catch(e){return{error:e.message}}
+ try{
+   py.runPython('for _n in [k for k in list(globals()) if not k.startswith("_")]:\n    del globals()[_n]');
+ }catch(e){}
+ try{
+   if(ex.mode==='stdout'){
+     py.runPython('import io, sys\n__buf = io.StringIO()\n__old_stdout = sys.stdout\nsys.stdout = __buf');
+     try{py.runPython(code)}
+     catch(e){py.runPython('sys.stdout = __old_stdout');return{error:cleanPyError(e)}}
+     const output=py.runPython('sys.stdout = __old_stdout\n__buf.getvalue()');
+     const expected=ex.tests[0].expected;
+     const pass=output===expected;
+     return{allPass:pass,details:[{expected,got:output,pass}]};
+   }
+   try{py.runPython(code)}catch(e){return{error:cleanPyError(e)}}
+   const details=[];
+   for(const t of ex.tests){
+     try{
+       const got=py.runPython('str('+t.call+')');
+       details.push({call:t.call,expected:t.expected,got,pass:got===t.expected});
+     }catch(e){
+       details.push({call:t.call,expected:t.expected,got:'Error: '+cleanPyError(e),pass:false});
+     }
+   }
+   return{allPass:details.every(d=>d.pass),details};
+ }catch(e){
+   return{error:cleanPyError(e)};
+ }
+}
+function renderCodeExercise(ex,ss){
+ const prog=pct(ss.index,ss.ids.length);
+ layout(`<div class="exercise">
+   <div class="exercise-top">
+     <button class="icon-btn" id="exitEx" aria-label="Salir">${svgIcon('close')}</button>
+     <div class="exercise-progress-wrap">
+       <div class="progress exercise-progress"><span style="width:${prog}%"></span></div>
+       <div class="muted small">Ejercicio ${ss.index+1} de ${ss.ids.length}</div>
+     </div>
+     <span class="badge">${esc(ex.difficulty)}</span>
+   </div>
+   <div class="c exercise-card">
+     <div class="exercise-meta"><span class="badge">${esc(ex.topic)}</span><span class="muted">${ex.id}</span></div>
+     <div class="q">${esc(ex.prompt)}</div>
+     <textarea class="code-editor" id="codeInput" spellcheck="false" autocapitalize="off" autocomplete="off">${esc(ex.starter)}</textarea>
+     <div class="row" style="border:0;padding-top:12px;flex-wrap:wrap;gap:10px">
+       <button class="btn" id="runCode">Ejecutar código</button>
+       <button class="btn ghost" id="skipCode" type="button">No puedo resolverlo, ver pista</button>
+       <span class="muted small" id="runStatus"></span>
+     </div>
+     <div id="testResults"></div>
+     <div id="feed"></div>
+   </div>
+ </div>`);
+ document.getElementById('exitEx').onclick=()=>{app.session=null;app.view='practice';render()};
+ document.getElementById('runCode').onclick=()=>runAndShowCode(ex);
+ document.getElementById('skipCode').onclick=()=>showCodeHint(ex);
+}
+function showCodeHint(ex){
+ const help=exerciseHint(ex);
+ const box=document.getElementById('testResults');
+ box.insertAdjacentHTML('beforeend',`<div class="feedback bad"><b>Pista:</b> ${esc(help)}<div class="muted small" style="margin-top:6px">Puedes seguir intentando, o continuar con el siguiente ejercicio.</div><button class="btn ghost" id="skipConfirm" style="margin-top:8px">Continuar sin resolverlo</button></div>`);
+ document.getElementById('skipConfirm').onclick=()=>finishCodeExercise(ex,document.getElementById('codeInput').value,false);
+}
+async function runAndShowCode(ex){
+ const btn=document.getElementById('runCode'),status=document.getElementById('runStatus');
+ const code=document.getElementById('codeInput').value;
+ btn.disabled=true;
+ status.textContent=PYODIDE?'Ejecutando…':'Cargando compilador de Python (solo la primera vez)…';
+ const result=await runCodeExercise(ex,code);
+ btn.disabled=false;
+ status.textContent='';
+ const box=document.getElementById('testResults');
+ if(result.error){
+   box.innerHTML=`<div class="feedback bad"><b>Error al ejecutar</b><div class="code" style="margin-top:8px">${esc(result.error)}</div></div>`;
+   return;
+ }
+ box.innerHTML=`<div class="test-results">${result.details.map((d,i)=>`<div class="row"><span>${d.call?('Prueba '+(i+1)+': '+esc(d.call)):'Salida esperada'}</span><span class="badge ${d.pass?'green':'redb'}">${d.pass?'Correcto':'Esperado: '+esc(d.expected)}</span></div>`).join('')}</div>`;
+ if(result.allPass)finishCodeExercise(ex,code,true);
+}
+async function finishCodeExercise(ex,code,correct){
+ const xp=correct?15:2;
+ document.getElementById('runCode').disabled=true;
+ document.getElementById('skipCode').disabled=true;
+ document.getElementById('codeInput').disabled=true;
+ if(app.mode==='demo'){const d=demoState();if(!d.answers[ex.id]){d.answers[ex.id]={correct,value:'code'};d.xp=(d.xp||0)+xp;saveDemo(d)}}
+ else{
+   const {error}=await sb.rpc('record_attempt',{p_exercise_id:ex.id,p_subject_id:ex.subject,p_topic:ex.topic,p_answer:code.slice(0,2000),p_correct:correct,p_xp:xp});
+   if(error)console.error(error);await refreshCloud();
+ }
+ const f=document.getElementById('feed');
+ f.innerHTML=`<div class="feedback ${correct?'good':'bad'}">
+   <b>${correct?'¡Correcto!':'Sin problema'}</b>
+   <div>${correct?'Tu código pasó todas las pruebas. Continúa con el siguiente ejercicio.':'Continuemos con el siguiente ejercicio.'}</div>
+ </div>
+ <button class="btn" id="nextEx" style="margin-top:10px">Continuar</button>`;
+ document.getElementById('nextEx').onclick=()=>{app.session.index++;renderExercise()};
+}
 function renderExercise(){
  const ss=app.session,ex=D.exercises.find(e=>e.id===ss.ids[ss.index]);
  if(!ex){app.session=null;app.view='practice';return render()}
+ if(ex.type==='code')return renderCodeExercise(ex,ss);
  const opts=shuffled(ex.options);
  const prog=pct(ss.index,ss.ids.length);
  layout(`<div class="exercise">
@@ -445,6 +590,9 @@ function renderExercise(){
 }
 function exerciseHint(ex){
  const topic=(ex.topic||'').toLowerCase();
+ if(topic.startsWith('código:')){
+   return 'Lee con cuidado el valor esperado o el mensaje de error de la prueba que falló: te dice exactamente qué no coincide. Corrige una sola cosa a la vez y vuelve a ejecutar.';
+ }
  if(topic.includes('variables')||topic.includes('operadores')){
    return 'Identifica primero el valor de cada variable y después aplica el operador paso a paso. Revisa especialmente la diferencia entre +, -, *, /, // y %.';
  }
@@ -564,7 +712,7 @@ function teacherHome(){
  return `<section class="hero"><h1>Panel docente</h1><p>Consulta grupos, estudiantes, actividad y avance académico desde un solo lugar.</p></section><div class="grid"><div class="c s3"><div class="muted">Grupos</div><div class="metric">${app.mode==='demo'?1:app.groups.length}</div></div><div class="c s3"><div class="muted">Alumnos</div><div class="metric">${sts.length}</div></div><div class="c s3"><div class="muted">Promedio de avance</div><div class="metric">${sts.length?Math.round(sts.reduce((a,s)=>a+studentCompletion(s),0)/sts.length):0}%</div></div><div class="c s3"><div class="muted">Requieren atención</div><div class="metric">${attention}</div></div><div class="c s12"><h3>Actividad reciente</h3>${sts.slice(0,5).map(s=>`<div class="row"><b>${esc(s.full_name)}</b><span class="badge ${studentAvg(s)<60?'redb':'green'}">${studentAvg(s)}% aciertos</span></div>`).join('')||'<div class="muted">Aún no hay alumnos inscritos.</div>'}</div></div>`;
 }
 function studentAvg(s){let done=(s.progress||[]).reduce((a,p)=>a+(p.exercises_done||0),0),c=(s.progress||[]).reduce((a,p)=>a+(p.correct_answers||0),0);return pct(c,done)}
-function studentCompletion(s){let done=(s.progress||[]).reduce((a,p)=>a+(p.exercises_done||0),0);return Math.min(100,pct(done,260))}
+function studentCompletion(s){let done=(s.progress||[]).reduce((a,p)=>a+(p.exercises_done||0),0);return Math.min(100,pct(done,D.exercises.length))}
 function groupsPage(){
  const gs=app.mode==='demo'?[{id:'g1',name:'Programación 3102',code:'PB3102',school_year:'2026-2027'}]:app.groups;
  const countOf=gid=>app.mode==='demo'?demoStudents().length:app.students.filter(s=>s.group_id===gid).length;
