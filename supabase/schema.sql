@@ -23,6 +23,22 @@ alter table public.profiles add column if not exists streak_current integer not 
 alter table public.profiles add column if not exists streak_best integer not null default 0;
 alter table public.profiles add column if not exists streak_last_date date;
 
+-- Última conexión (se actualiza al iniciar sesión o reabrir la app).
+alter table public.profiles add column if not exists last_login timestamptz;
+
+create or replace function public.touch_last_login()
+returns void
+language plpgsql
+security definer
+set search_path = public
+as $$
+begin
+  update public.profiles set last_login = now() where id = auth.uid();
+end;
+$$;
+
+grant execute on function public.touch_last_login() to authenticated;
+
 create table if not exists public.school_groups (
   id uuid primary key default gen_random_uuid(),
   name text not null,

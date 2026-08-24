@@ -61,6 +61,11 @@ function shuffled(arr){
  return a;
 }
 function pct(a,b){return b?Math.round(a/b*100):0}
+function lastSeenText(ts){
+ if(!ts)return 'Nunca';
+ const d=new Date(ts);
+ return d.toLocaleDateString('es-MX',{day:'2-digit',month:'2-digit',year:'numeric'})+' · '+d.toLocaleTimeString('es-MX',{hour:'2-digit',minute:'2-digit'});
+}
 function demoState(){return JSON.parse(localStorage.getItem(DEMO_KEY)||'null')||{answers:{},xp:0,role:null,name:''}}
 function saveDemo(x){localStorage.setItem(DEMO_KEY,JSON.stringify(x))}
 function exBySubject(id){return D.exercises.filter(e=>e.subject===id)}
@@ -188,7 +193,9 @@ async function loadCloudSession(session){
  app.user=session?.user||null;if(!app.user)return;
  const {data,error}=await sb.from('profiles').select('*').eq('id',app.user.id).single();
  if(error){alert(error.message);return}
- app.profile=data;app.view=data.role==='teacher'?'teacher':data.role==='admin'?'admin':'home';await refreshCloud();
+ app.profile=data;app.view=data.role==='teacher'?'teacher':data.role==='admin'?'admin':'home';
+ sb.rpc('touch_last_login').then(()=>{},()=>{});
+ await refreshCloud();
 }
 async function refreshCloud(){
  if(app.mode!=='cloud'||!app.profile)return;
@@ -222,7 +229,7 @@ async function loadTeacherStudents(){
  if(app.mode!=='cloud'){app.students=demoStudents();return}
  if(!app.groups.length){app.students=[];return}
  const gids=app.groups.map(g=>g.id);
- const {data:m,error}=await sb.from('group_members').select('group_id,student_id,profiles!group_members_student_id_fkey(id,full_name)').in('group_id',gids);
+ const {data:m,error}=await sb.from('group_members').select('group_id,student_id,profiles!group_members_student_id_fkey(id,full_name,last_login)').in('group_id',gids);
  if(error){console.error(error);app.students=[];return}
  const ids=[...new Set((m||[]).map(x=>x.student_id))];
  let prog=[];if(ids.length){const r=await sb.from('student_progress').select('*').in('student_id',ids);prog=r.data||[]}
@@ -950,7 +957,7 @@ function studentsPage(){
  ${gids.map(gid=>{
    const list=byGroup[gid];
    return `<h3 style="margin-top:22px">${esc(teacherGroupLabel(gid))} <span class="muted">(${list.length})</span></h3>
-   <div class="c"><table class="table"><thead><tr><th>Alumno</th><th>Avance</th><th>Aciertos</th><th>Estado</th><th></th></tr></thead><tbody>${list.map(s=>`<tr><td>${esc(s.full_name)}</td><td>${studentCompletion(s)}%</td><td>${studentAvg(s)}%</td><td><span class="badge ${studentAvg(s)<60?'redb':studentAvg(s)<75?'amber':'green'}">${studentAvg(s)<60?'Atención':studentAvg(s)<75?'En proceso':'Buen avance'}</span></td><td><button class="btn ghost" data-student="${s.id}">Ver</button></td></tr>`).join('')}</tbody></table></div>`;
+   <div class="c"><table class="table"><thead><tr><th>Alumno</th><th>Avance</th><th>Aciertos</th><th>Estado</th><th>Última conexión</th><th></th></tr></thead><tbody>${list.map(s=>`<tr><td>${esc(s.full_name)}</td><td>${studentCompletion(s)}%</td><td>${studentAvg(s)}%</td><td><span class="badge ${studentAvg(s)<60?'redb':studentAvg(s)<75?'amber':'green'}">${studentAvg(s)<60?'Atención':studentAvg(s)<75?'En proceso':'Buen avance'}</span></td><td class="muted small">${lastSeenText(s.last_login)}</td><td><button class="btn ghost" data-student="${s.id}">Ver</button></td></tr>`).join('')}</tbody></table></div>`;
  }).join('')||'<div class="c">Aún no tienes alumnos inscritos en ningún grupo.</div>'}`;
 }
 function trackingPage(){
@@ -986,18 +993,19 @@ function adminUsersPage(){
  ${roles.map(([r,label])=>{
    const rows=app.admin.profiles.filter(p=>p.role===r);
    return `<h3 style="margin-top:22px">${label} <span class="muted">(${rows.length})</span></h3>
-   <div class="c"><table class="table"><thead><tr><th>Nombre</th><th>Usuario</th>${r==='student'?'<th>Grupo</th>':''}<th>Rol</th><th></th></tr></thead><tbody>
+   <div class="c"><table class="table"><thead><tr><th>Nombre</th><th>Usuario</th>${r==='student'?'<th>Grupo</th>':''}<th>Última conexión</th><th>Rol</th><th></th></tr></thead><tbody>
    ${rows.map(p=>`<tr>
      <td>${esc(p.full_name||'—')}</td>
      <td>${esc(p.username||'—')}</td>
      ${r==='student'?`<td>${esc(studentGroupOf(p.id)?.name||'Sin grupo')}</td>`:''}
+     <td class="muted small">${lastSeenText(p.last_login)}</td>
      <td><select data-role-user="${p.id}">
        <option value="student" ${p.role==='student'?'selected':''}>Alumno</option>
        <option value="teacher" ${p.role==='teacher'?'selected':''}>Docente</option>
        <option value="admin" ${p.role==='admin'?'selected':''}>Admin</option>
      </select></td>
      <td><button class="btn ghost" data-reset-pass="${p.id}" data-reset-name="${esc(p.full_name||p.username||'')}">Contraseña</button></td>
-   </tr>`).join('')||`<tr><td colspan="5" class="muted">Sin cuentas.</td></tr>`}
+   </tr>`).join('')||`<tr><td colspan="6" class="muted">Sin cuentas.</td></tr>`}
    </tbody></table></div>`;
  }).join('')}`;
 }
