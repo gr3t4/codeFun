@@ -69,8 +69,10 @@ Abre `http://127.0.0.1:8080`.
 ## Contenido
 - Programación Básica con Python: 257 ejercicios (136 de opción múltiple + 121
   de código real, ejecutados con un compilador de Python en el navegador).
-- Lógica de Programación: 124 ejercicios de opción múltiple.
-- Total: 381 ejercicios.
+- Lógica de Programación: 260 ejercicios (180 de opción múltiple + 20 de
+  ordenar pasos + 20 de relacionar columnas + 20 de tabla de verdad
+  interactiva + 20 de completar pseudocódigo).
+- Total: 517 ejercicios.
 - PWA.
 
 
@@ -123,3 +125,19 @@ Abre `http://127.0.0.1:8080`.
   WebAssembly, corre 100% en el navegador — no hay backend de ejecución de
   código). Incluye ejercicios de completar funciones, programas con `print()`
   y depuración (corregir un error ya escrito).
+
+## v1.6 — Lógica de Programación ampliada y ejercicios interactivos
+- Lógica de Programación pasó de 124 a 260 ejercicios, todos verificados sin
+  prompts duplicados en toda la materia.
+- 4 tipos de ejercicio nuevos, más allá de la opción múltiple:
+  - **Ordena los pasos**: se dan los pasos de un algoritmo desordenados y el
+    alumno los toca en la secuencia correcta.
+  - **Relaciona conceptos**: el alumno empareja elementos de dos columnas
+    (símbolos de diagrama de flujo, operadores, tipos de dato, etc.).
+  - **Tabla de verdad interactiva**: el alumno completa una tabla de verdad
+    completa (Y, O, NO, XOR, condicional) haciendo clic en V/F por fila; las
+    filas y el valor esperado se calculan en el cliente, no están escritos a
+    mano.
+  - **Completa el pseudocódigo**: se muestra un fragmento de pseudocódigo con
+    una palabra clave faltante (Si/Mientras/Para/Leer/Escribir/etc.) y el
+    alumno elige la correcta.

@@ -562,10 +562,205 @@ async function finishCodeExercise(ex,code,correct){
  <button class="btn" id="nextEx" style="margin-top:10px">Continuar</button>`;
  document.getElementById('nextEx').onclick=()=>{app.session.index++;renderExercise()};
 }
+function exTopBar(ex,ss){
+ const prog=pct(ss.index,ss.ids.length);
+ return `<div class="exercise-top">
+   <button class="icon-btn" id="exitEx" aria-label="Salir">${svgIcon('close')}</button>
+   <div class="exercise-progress-wrap">
+     <div class="progress exercise-progress"><span style="width:${prog}%"></span></div>
+     <div class="muted small">Ejercicio ${ss.index+1} de ${ss.ids.length}</div>
+   </div>
+   <span class="badge">${esc(ex.difficulty)}</span>
+ </div>`;
+}
+async function finishInteractiveExercise(ex,answerSummary,correct){
+ const xp=correct?12:3;
+ if(app.mode==='demo'){const d=demoState();if(!d.answers[ex.id]){d.answers[ex.id]={correct,value:answerSummary};d.xp=(d.xp||0)+xp;saveDemo(d)}}
+ else{
+   const {error}=await sb.rpc('record_attempt',{p_exercise_id:ex.id,p_subject_id:ex.subject,p_topic:ex.topic,p_answer:String(answerSummary).slice(0,500),p_correct:correct,p_xp:xp});
+   if(error)console.error(error);await refreshCloud();
+ }
+ const help=exerciseHint(ex);
+ const f=document.getElementById('feed');
+ f.innerHTML=`<div class="feedback ${correct?'good':'bad'}">
+   <b>${correct?'¡Correcto!':'Casi'}</b>
+   <div>${correct?'Buen trabajo. Continúa con el siguiente ejercicio.':`<b>Pista:</b> ${esc(help)}`}</div>
+ </div>
+ <button class="btn" id="nextEx" style="margin-top:10px">${correct?'Continuar':'Continuar de todos modos'}</button>`;
+ document.getElementById('nextEx').onclick=()=>{app.session.index++;renderExercise()};
+}
+function renderOrderExercise(ex,ss){
+ const shuffledSteps=shuffled(ex.steps.map((text,i)=>({text,orig:i})));
+ layout(`<div class="exercise">
+   ${exTopBar(ex,ss)}
+   <div class="c exercise-card">
+     <div class="exercise-meta"><span class="badge">${esc(ex.topic)}</span><span class="muted">${ex.id}</span></div>
+     <div class="q">${esc(ex.prompt)}</div>
+     <p class="muted small">Toca los pasos en el orden correcto.</p>
+     <div class="opts" id="orderList">${shuffledSteps.map((s,i)=>`<button class="opt order-item" data-orig="${s.orig}"><span class="option-key" id="obadge-${i}"></span><span>${esc(s.text)}</span></button>`).join('')}</div>
+     <div class="row" style="border:0;padding-top:10px">
+       <button class="btn ghost" id="resetOrder" type="button">Reiniciar</button>
+     </div>
+     <div id="feed"></div>
+   </div>
+ </div>`);
+ document.getElementById('exitEx').onclick=()=>{app.session=null;app.view='practice';render()};
+ let selected=[];
+ const items=Array.from(document.querySelectorAll('.order-item'));
+ function refreshBadges(){
+   items.forEach(btn=>{
+     const orig=+btn.dataset.orig,pos=selected.indexOf(orig),badge=btn.querySelector('.option-key');
+     badge.textContent=pos>=0?String(pos+1):'';
+     btn.classList.toggle('selected',pos>=0);
+   });
+ }
+ items.forEach(btn=>{
+   btn.onclick=()=>{
+     const orig=+btn.dataset.orig;
+     if(selected.includes(orig))selected=selected.filter(x=>x!==orig);
+     else selected.push(orig);
+     refreshBadges();
+     if(selected.length===items.length){
+       items.forEach(b=>b.style.pointerEvents='none');
+       const correct=selected.every((v,i)=>v===i);
+       finishInteractiveExercise(ex,selected.join(','),correct);
+     }
+   };
+ });
+ document.getElementById('resetOrder').onclick=()=>{selected=[];refreshBadges()};
+}
+function renderMatchExercise(ex,ss){
+ const leftItems=shuffled(ex.pairs.map((p,i)=>({text:p[0],idx:i})));
+ const rightItems=shuffled(ex.pairs.map((p,i)=>({text:p[1],idx:i})));
+ layout(`<div class="exercise">
+   ${exTopBar(ex,ss)}
+   <div class="c exercise-card">
+     <div class="exercise-meta"><span class="badge">${esc(ex.topic)}</span><span class="muted">${ex.id}</span></div>
+     <div class="q">${esc(ex.prompt)}</div>
+     <p class="muted small">Toca un elemento de cada columna para relacionarlos.</p>
+     <div class="match-grid">
+       <div class="match-col" id="matchLeft">${leftItems.map(it=>`<button class="opt match-item" data-idx="${it.idx}">${esc(it.text)}</button>`).join('')}</div>
+       <div class="match-col" id="matchRight">${rightItems.map(it=>`<button class="opt match-item" data-idx="${it.idx}">${esc(it.text)}</button>`).join('')}</div>
+     </div>
+     <div id="feed"></div>
+   </div>
+ </div>`);
+ document.getElementById('exitEx').onclick=()=>{app.session=null;app.view='practice';render()};
+ let selLeft=null,selRight=null;const matched=new Set();let wrongCount=0;
+ const leftBtns=Array.from(document.querySelectorAll('#matchLeft .match-item'));
+ const rightBtns=Array.from(document.querySelectorAll('#matchRight .match-item'));
+ function tryMatch(){
+   if(selLeft==null||selRight==null)return;
+   const lBtn=leftBtns.find(b=>+b.dataset.idx===selLeft),rBtn=rightBtns.find(b=>+b.dataset.idx===selRight);
+   if(selLeft===selRight){
+     lBtn.classList.add('correct');rBtn.classList.add('correct');
+     lBtn.disabled=true;rBtn.disabled=true;
+     matched.add(selLeft);
+   }else{
+     wrongCount++;
+     lBtn.classList.add('incorrect');rBtn.classList.add('incorrect');
+     setTimeout(()=>{lBtn.classList.remove('incorrect','selected');rBtn.classList.remove('incorrect','selected')},500);
+   }
+   selLeft=null;selRight=null;
+   leftBtns.forEach(b=>b.classList.remove('selected'));rightBtns.forEach(b=>b.classList.remove('selected'));
+   if(matched.size===ex.pairs.length){
+     leftBtns.forEach(b=>b.disabled=true);rightBtns.forEach(b=>b.disabled=true);
+     finishInteractiveExercise(ex,'matched',wrongCount===0);
+   }
+ }
+ leftBtns.forEach(btn=>btn.onclick=()=>{if(btn.disabled)return;leftBtns.forEach(b=>b.classList.remove('selected'));btn.classList.add('selected');selLeft=+btn.dataset.idx;tryMatch()});
+ rightBtns.forEach(btn=>btn.onclick=()=>{if(btn.disabled)return;rightBtns.forEach(b=>b.classList.remove('selected'));btn.classList.add('selected');selRight=+btn.dataset.idx;tryMatch()});
+}
+const TRUTH_OPS={
+ AND:{label:'Y',fn:(vals)=>vals[0]&&vals[1]},
+ OR:{label:'O',fn:(vals)=>vals[0]||vals[1]},
+ XOR:{label:'O exclusivo',fn:(vals)=>vals[0]!==vals[1]},
+ COND:{label:'Si P entonces Q',fn:(vals)=>(!vals[0])||vals[1]},
+ NOT:{label:'NO',fn:(vals)=>!vals[0]}
+};
+function truthRows(ex){
+ const vars=ex.vars,n=vars.length,op=TRUTH_OPS[ex.operator],rows=[],total=Math.pow(2,n);
+ for(let i=0;i<total;i++){
+   const vals=vars.map((v,idx)=>((i>>(n-1-idx))&1)===1);
+   rows.push({vals,expected:op.fn(vals)});
+ }
+ return rows;
+}
+function renderTruthExercise(ex,ss){
+ const rows=truthRows(ex);
+ layout(`<div class="exercise">
+   ${exTopBar(ex,ss)}
+   <div class="c exercise-card">
+     <div class="exercise-meta"><span class="badge">${esc(ex.topic)}</span><span class="muted">${ex.id}</span></div>
+     <div class="q">${esc(ex.prompt)}</div>
+     <div class="c" style="padding:0;overflow:auto;box-shadow:none;margin-top:10px"><table class="table"><thead><tr>${ex.vars.map(v=>`<th>${esc(v)}</th>`).join('')}<th>Resultado</th></tr></thead>
+     <tbody>${rows.map((r,i)=>`<tr>${r.vals.map(v=>`<td>${v?'V':'F'}</td>`).join('')}<td><div class="truth-toggle" data-row="${i}"><button class="btn ghost truth-btn" data-val="true" type="button">V</button><button class="btn ghost truth-btn" data-val="false" type="button">F</button></div></td></tr>`).join('')}</tbody>
+     </table></div>
+     <div class="row" style="border:0;padding-top:12px">
+       <button class="btn" id="checkTruth">Verificar tabla</button>
+     </div>
+     <div id="feed"></div>
+   </div>
+ </div>`);
+ document.getElementById('exitEx').onclick=()=>{app.session=null;app.view='practice';render()};
+ const answers={};
+ document.querySelectorAll('.truth-btn').forEach(btn=>{
+   btn.onclick=()=>{
+     const wrap=btn.closest('.truth-toggle');
+     answers[wrap.dataset.row]=btn.dataset.val==='true';
+     wrap.querySelectorAll('.truth-btn').forEach(b=>b.classList.remove('selected'));
+     btn.classList.add('selected');
+   };
+ });
+ document.getElementById('checkTruth').onclick=()=>{
+   if(Object.keys(answers).length<rows.length){alert('Completa todas las filas antes de verificar.');return}
+   const correct=rows.every((r,i)=>answers[i]===r.expected);
+   document.querySelectorAll('.truth-btn').forEach(b=>b.disabled=true);
+   document.getElementById('checkTruth').disabled=true;
+   rows.forEach((r,i)=>{
+     const wrap=document.querySelector(`.truth-toggle[data-row="${i}"]`);
+     wrap.querySelectorAll('.truth-btn').forEach(b=>{
+       if((b.dataset.val==='true')===r.expected)b.classList.add('correct');
+       else if(b.classList.contains('selected'))b.classList.add('incorrect');
+     });
+   });
+   finishInteractiveExercise(ex,JSON.stringify(answers),correct);
+ };
+}
+function renderFillExercise(ex,ss){
+ const parts=ex.code.split('{{BLANK}}');
+ const opts=shuffled(ex.options);
+ layout(`<div class="exercise">
+   ${exTopBar(ex,ss)}
+   <div class="c exercise-card">
+     <div class="exercise-meta"><span class="badge">${esc(ex.topic)}</span><span class="muted">${ex.id}</span></div>
+     <div class="q">${esc(ex.prompt)}</div>
+     <div class="code">${esc(parts[0])}<span class="fill-blank" id="fillBlank">____</span>${esc(parts[1])}</div>
+     <div class="opts" style="margin-top:14px">${opts.map((o,i)=>`<button class="opt" data-answer="${encodeURIComponent(o)}"><span class="option-key">${String.fromCharCode(65+i)}</span><span>${esc(o)}</span></button>`).join('')}</div>
+     <div id="feed"></div>
+   </div>
+ </div>`);
+ document.getElementById('exitEx').onclick=()=>{app.session=null;app.view='practice';render()};
+ document.querySelectorAll('[data-answer]').forEach(b=>b.onclick=()=>{
+   const val=decodeURIComponent(b.dataset.answer),correct=val===ex.answer;
+   document.getElementById('fillBlank').textContent=val;
+   document.querySelectorAll('[data-answer]').forEach(x=>{
+     x.disabled=true;
+     const v=decodeURIComponent(x.dataset.answer);
+     if(v===ex.answer)x.classList.add('correct');
+     else if(v===val)x.classList.add('incorrect');
+   });
+   finishInteractiveExercise(ex,val,correct);
+ });
+}
 function renderExercise(){
  const ss=app.session,ex=D.exercises.find(e=>e.id===ss.ids[ss.index]);
  if(!ex){app.session=null;app.view='practice';return render()}
  if(ex.type==='code')return renderCodeExercise(ex,ss);
+ if(ex.type==='order')return renderOrderExercise(ex,ss);
+ if(ex.type==='match')return renderMatchExercise(ex,ss);
+ if(ex.type==='truth')return renderTruthExercise(ex,ss);
+ if(ex.type==='fill')return renderFillExercise(ex,ss);
  const opts=shuffled(ex.options);
  const prog=pct(ss.index,ss.ids.length);
  layout(`<div class="exercise">
@@ -592,6 +787,15 @@ function exerciseHint(ex){
  const topic=(ex.topic||'').toLowerCase();
  if(topic.startsWith('código:')){
    return 'Lee con cuidado el valor esperado o el mensaje de error de la prueba que falló: te dice exactamente qué no coincide. Corrige una sola cosa a la vez y vuelve a ejecutar.';
+ }
+ if(topic.includes('ordena los pasos')){
+   return 'Piensa en qué debe existir o suceder antes de cada acción. Identifica primero el paso inicial y el resultado final, y ubica el resto entre ellos.';
+ }
+ if(topic.includes('relaciona conceptos')){
+   return 'Repasa la definición de cada término de la izquierda antes de buscar su pareja a la derecha. Empareja primero los que tengas más seguros.';
+ }
+ if(topic.includes('tabla de verdad')){
+   return 'Evalúa una fila a la vez: sustituye los valores de las variables y aplica únicamente el operador indicado en el enunciado.';
  }
  if(topic.includes('variables')||topic.includes('operadores')){
    return 'Identifica primero el valor de cada variable y después aplica el operador paso a paso. Revisa especialmente la diferencia entre +, -, *, /, // y %.';
