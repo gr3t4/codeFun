@@ -568,7 +568,16 @@ function studentCompletion(s){let done=(s.progress||[]).reduce((a,p)=>a+(p.exerc
 function groupsPage(){
  const gs=app.mode==='demo'?[{id:'g1',name:'Programación 3102',code:'PB3102',school_year:'2026-2027'}]:app.groups;
  const countOf=gid=>app.mode==='demo'?demoStudents().length:app.students.filter(s=>s.group_id===gid).length;
- return `<div class="row"><div><h2>Mis grupos</h2><div class="muted">Crea un grupo y comparte su código con los alumnos.</div></div><button class="btn" id="newGroup">+ Crear grupo</button></div><div class="grid">${gs.map(g=>`<div class="c s6"><span class="badge">${esc(g.code)}</span><h3>${esc(g.name)}</h3><div class="row"><span>Ciclo escolar</span><b>${esc(g.school_year||'—')}</b></div><div class="row"><span>Alumnos inscritos</span><b>${countOf(g.id)}</b></div><div class="muted">Los alumnos se unen usando este código.</div></div>`).join('')||'<div class="c s12">Aún no has creado grupos.</div>'}</div>`;
+ return `<div class="row"><div><h2>Mis grupos</h2><div class="muted">Crea un grupo y comparte su código con los alumnos.</div></div><button class="btn" id="newGroup">+ Crear grupo</button></div><div class="grid">${gs.map(g=>`<div class="c s6"><span class="badge">${esc(g.code)}</span><h3>${esc(g.name)}</h3><div class="row"><span>Ciclo escolar</span><b>${esc(g.school_year||'—')}</b></div><div class="row"><span>Alumnos inscritos</span><b>${countOf(g.id)}</b></div><button class="btn ghost block" style="margin-top:10px" data-view-group="${g.id}" data-view-group-name="${esc(g.name)}">Ver lista de alumnos</button></div>`).join('')||'<div class="c s12">Aún no has creado grupos.</div>'}</div>`;
+}
+function showGroupStudentsModal(gid,name){
+ const sts=app.mode==='demo'?demoStudents():app.students.filter(s=>s.group_id===gid);
+ el.insertAdjacentHTML('beforeend',`<div class="modal" id="modal"><div class="modal-card">
+   <div class="row"><h3>${esc(name)}</h3><button class="btn ghost" id="closeModal" type="button">Cerrar</button></div>
+   <p class="muted">${sts.length} alumno${sts.length===1?'':'s'} inscrito${sts.length===1?'':'s'}.</p>
+   ${sts.map(s=>`<div class="row"><div><b>${esc(s.full_name)}</b></div><span class="badge ${studentAvg(s)<60?'redb':studentAvg(s)<75?'amber':'green'}">${studentCompletion(s)}% avance · ${studentAvg(s)}% aciertos</span></div>`).join('')||'<div class="muted">Aún no hay alumnos en este grupo.</div>'}
+ </div></div>`);
+ document.getElementById('closeModal').onclick=()=>document.getElementById('modal').remove();
 }
 function studentsByGroup(sts){
  const map={};
@@ -735,6 +744,7 @@ function wire(){
  const jf=document.getElementById('joinForm');if(jf)jf.onsubmit=joinGroup;
  const ng=document.getElementById('newGroup');if(ng)ng.onclick=showCreateGroupModal;
  document.querySelectorAll('[data-student]').forEach(x=>x.onclick=()=>studentDetail(x.dataset.student));
+ document.querySelectorAll('[data-view-group]').forEach(x=>x.onclick=()=>showGroupStudentsModal(x.dataset.viewGroup,x.dataset.viewGroupName));
  document.querySelectorAll('[data-role-user]').forEach(x=>x.onchange=()=>changeUserRole(x.dataset.roleUser,x.value));
  document.querySelectorAll('[data-delete-group]').forEach(x=>x.onclick=()=>deleteGroup(x.dataset.deleteGroup));
  document.querySelectorAll('[data-reset-pass]').forEach(x=>x.onclick=()=>showResetPasswordModal(x.dataset.resetPass,x.dataset.resetName));
