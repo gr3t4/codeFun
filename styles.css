@@ -143,6 +143,12 @@ h3{font-size:16px;font-weight:750}
 
 .fill-blank{display:inline-block;min-width:64px;text-align:center;border-bottom:2px dashed var(--pri-light);color:var(--pri-light);font-weight:800;padding:0 4px}
 
+.topic-block{padding:6px 0 12px;border-bottom:1px solid var(--line)}
+.topic-block:last-child{border-bottom:0;padding-bottom:0}
+.ex-dots{display:flex;flex-wrap:wrap;gap:4px;margin:6px 0 2px}
+.ex-dot{width:11px;height:11px;border-radius:3px;background:#e3e6ee;flex:none}
+.ex-dot.done{background:var(--pri)}
+
 @media(max-width:560px){
   .match-grid{gap:8px}
   .match-item{min-height:56px;font-size:14px}

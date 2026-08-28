@@ -44,7 +44,7 @@ Deno.serve(async (req) => {
   const { data: { user: caller }, error: userError } = await callerClient.auth.getUser();
   if (userError || !caller) return json({ error: 'Sesión inválida.' }, 401);
 
-  // Service-role client: bypasses RLS, used only to check the caller's role
+  // Service-role client: bypasses RLS, used only to check authorization
   // and to perform the actual password reset.
   const adminClient = createClient(supabaseUrl, serviceRoleKey);
   const { data: callerProfile, error: profileError } = await adminClient
@@ -52,8 +52,33 @@ Deno.serve(async (req) => {
     .select('role')
     .eq('id', caller.id)
     .single();
-  if (profileError || callerProfile?.role !== 'admin') {
-    return json({ error: 'Solo un administrador puede cambiar contraseñas.' }, 403);
+  if (profileError || !callerProfile) {
+    return json({ error: 'No se pudo verificar tu cuenta.' }, 403);
+  }
+
+  if (callerProfile.role === 'admin') {
+    // admins can reset anyone's password
+  } else if (callerProfile.role === 'teacher') {
+    // teachers can only reset the password of a student enrolled in one of their own groups
+    const { data: targetProfile } = await adminClient
+      .from('profiles')
+      .select('role')
+      .eq('id', user_id)
+      .single();
+    if (!targetProfile || targetProfile.role !== 'student') {
+      return json({ error: 'Solo puedes cambiar la contraseña de alumnos.' }, 403);
+    }
+    const { data: membership } = await adminClient
+      .from('group_members')
+      .select('student_id, school_groups!inner(teacher_id)')
+      .eq('student_id', user_id)
+      .eq('school_groups.teacher_id', caller.id)
+      .limit(1);
+    if (!membership || membership.length === 0) {
+      return json({ error: 'Solo puedes cambiar la contraseña de alumnos de tus propios grupos.' }, 403);
+    }
+  } else {
+    return json({ error: 'No tienes permiso para cambiar contraseñas.' }, 403);
   }
 
   const { error: updateError } = await adminClient.auth.admin.updateUserById(user_id, {

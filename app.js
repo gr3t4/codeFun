@@ -10,7 +10,7 @@ function usernameToEmail(u){
  const v=String(u||'').trim().toLowerCase();
  return v.includes('@')?v:v+USERNAME_DOMAIN;
 }
-let app={mode:hasSupabase?'cloud':'demo',user:null,profile:null,view:'home',subject:'python',session:null,lesson:null,groups:[],students:[],progress:[],attempts:[],leaderboard:[],admin:{profiles:[],groups:[],members:[],progress:[]}};
+let app={mode:hasSupabase?'cloud':'demo',user:null,profile:null,view:'home',subject:'python',session:null,lesson:null,groups:[],students:[],progress:[],attempts:[],leaderboard:[],studentsGroupFilter:'all',admin:{profiles:[],groups:[],members:[],progress:[]}};
 
 const LEVELS=[
  {name:'Novato',min:0},
@@ -203,6 +203,7 @@ async function refreshCloud(){
    let {data:p}=await sb.from('student_progress').select('*').eq('student_id',app.profile.id);app.progress=p||[];
    let {data:g}=await sb.from('group_members').select('group_id,school_groups(id,name,code,school_year)').eq('student_id',app.profile.id);app.groups=(g||[]).map(x=>x.school_groups).filter(Boolean);
    let {data:prof}=await sb.from('profiles').select('*').eq('id',app.profile.id).single();if(prof)app.profile=prof;
+   let {data:att}=await sb.from('exercise_attempts').select('exercise_id,correct').eq('student_id',app.profile.id);app.attempts=att||[];
    if(app.groups[0]){const {data:lb}=await sb.rpc('group_leaderboard',{p_group_id:app.groups[0].id});app.leaderboard=lb||[]}else app.leaderboard=[];
  }else if(app.profile.role==='admin'){
    await loadAdminData();
@@ -333,10 +334,27 @@ function studentHome(){
  <div class="grid"><div class="c s3"><div class="muted">Ejercicios realizados</div><div class="metric">${done}</div></div><div class="c s3"><div class="muted">Precisión</div><div class="metric">${pct(correct,done)}%</div></div><div class="c s3"><div class="muted">Nivel ${lvl.number} · ${xp} XP</div><div class="metric" style="font-size:19px">${esc(lvl.name)}</div></div><div class="c s3"><div class="muted">${streak===null?'Grupo':'Racha'}</div><div class="metric" style="font-size:19px">${streak===null?esc(app.groups[0]?.name||'Sin grupo'):streak+' día'+(streak===1?'':'s')}</div></div>${subjectsCards()}</div>`;
 }
 function subjectsPage(){return `<h2>Mis materias</h2><p class="muted">Elige una materia para consultar sus unidades y practicar.</p><div class="grid">${subjectsCards()}</div>`}
+function attemptedIdSet(){
+ if(app.mode==='demo')return new Set(Object.keys(demoState().answers||{}));
+ return new Set((app.attempts||[]).map(a=>a.exercise_id));
+}
 function practicePage(){
  const s=D.subjects[app.subject];
+ const attempted=attemptedIdSet();
  return `<div class="row"><div><h2>${s.name}</h2><div class="muted">${exBySubject(app.subject).length} ejercicios</div></div><button class="btn soft" id="switchSub">Cambiar a ${app.subject==='python'?'Lógica':'Python'}</button></div>
- <div class="grid">${s.units.map(u=>`<div class="c s6"><span class="badge">${u.id}</span><h3>${u.title}</h3><p class="muted">${u.topics.join(' · ')}</p>${u.topics.map(t=>`<button class="btn ghost" data-topic="${esc(t)}" style="margin:4px">${esc(t)}</button>`).join('')}</div>`).join('')}</div>`;
+ <div class="grid">${s.units.map(u=>`<div class="c s6"><span class="badge">${u.id}</span><h3>${u.title}</h3><p class="muted">${u.topics.join(' · ')}</p>
+   ${u.topics.map(t=>{
+     const exs=D.exercises.filter(e=>e.subject===app.subject&&e.topic===t);
+     const done=exs.filter(e=>attempted.has(e.id)).length;
+     return `<div class="topic-block">
+       <div class="row" style="border:0;padding:6px 0 2px;gap:8px">
+         <button class="btn ghost" data-topic="${esc(t)}">${esc(t)}</button>
+         <span class="muted small">${done}/${exs.length} hechos</span>
+       </div>
+       <div class="ex-dots">${exs.map(e=>`<span class="ex-dot ${attempted.has(e.id)?'done':''}" title="${esc(e.id)}"></span>`).join('')}</div>
+     </div>`;
+   }).join('')}
+ </div>`).join('')}</div>`;
 }
 const PY_LESSONS={
  'Variables y operadores':{
@@ -952,12 +970,20 @@ function studentsPage(){
  const sts=app.mode==='demo'?demoStudents():app.students;
  if(app.mode==='demo')return `<h2>Alumnos</h2><h3>Programación 3102 <span class="muted">(${sts.length})</span></h3><div class="c"><table class="table"><thead><tr><th>Alumno</th><th>Avance</th><th>Aciertos</th><th>Estado</th><th></th></tr></thead><tbody>${sts.map(s=>`<tr><td>${esc(s.full_name)}</td><td>${studentCompletion(s)}%</td><td>${studentAvg(s)}%</td><td><span class="badge ${studentAvg(s)<60?'redb':studentAvg(s)<75?'amber':'green'}">${studentAvg(s)<60?'Atención':studentAvg(s)<75?'En proceso':'Buen avance'}</span></td><td><button class="btn ghost" data-student="${s.id}">Ver</button></td></tr>`).join('')}</tbody></table></div>`;
  const byGroup=studentsByGroup(sts);
- const gids=Object.keys(byGroup);
- return `<h2>Alumnos</h2><p class="muted">${sts.length} alumno${sts.length===1?'':'s'} en ${app.groups.length} grupo${app.groups.length===1?'':'s'}.</p>
+ let gids=Object.keys(byGroup);
+ const filter=app.studentsGroupFilter||'all';
+ if(filter!=='all')gids=gids.filter(gid=>gid===filter);
+ return `<div class="row" style="border:0"><h2 style="margin:0">Alumnos</h2>
+   <select id="groupFilter" style="max-width:260px">
+     <option value="all" ${filter==='all'?'selected':''}>Todos los grupos</option>
+     ${app.groups.map(g=>`<option value="${g.id}" ${filter===g.id?'selected':''}>${esc(g.name)} · ${esc(g.code)}</option>`).join('')}
+   </select>
+ </div>
+ <p class="muted">${sts.length} alumno${sts.length===1?'':'s'} en ${app.groups.length} grupo${app.groups.length===1?'':'s'}.</p>
  ${gids.map(gid=>{
    const list=byGroup[gid];
    return `<h3 style="margin-top:22px">${esc(teacherGroupLabel(gid))} <span class="muted">(${list.length})</span></h3>
-   <div class="c"><table class="table"><thead><tr><th>Alumno</th><th>Avance</th><th>Aciertos</th><th>Estado</th><th>Última conexión</th><th></th></tr></thead><tbody>${list.map(s=>`<tr><td>${esc(s.full_name)}</td><td>${studentCompletion(s)}%</td><td>${studentAvg(s)}%</td><td><span class="badge ${studentAvg(s)<60?'redb':studentAvg(s)<75?'amber':'green'}">${studentAvg(s)<60?'Atención':studentAvg(s)<75?'En proceso':'Buen avance'}</span></td><td class="muted small">${lastSeenText(s.last_login)}</td><td><button class="btn ghost" data-student="${s.id}">Ver</button></td></tr>`).join('')}</tbody></table></div>`;
+   <div class="c"><table class="table"><thead><tr><th>Alumno</th><th>Avance</th><th>Aciertos</th><th>Estado</th><th>Última conexión</th><th></th><th></th></tr></thead><tbody>${list.map(s=>`<tr><td>${esc(s.full_name)}</td><td>${studentCompletion(s)}%</td><td>${studentAvg(s)}%</td><td><span class="badge ${studentAvg(s)<60?'redb':studentAvg(s)<75?'amber':'green'}">${studentAvg(s)<60?'Atención':studentAvg(s)<75?'En proceso':'Buen avance'}</span></td><td class="muted small">${lastSeenText(s.last_login)}</td><td><button class="btn ghost" data-student="${s.id}">Ver</button></td><td><button class="btn ghost" data-reset-pass="${s.id}" data-reset-name="${esc(s.full_name)}">Contraseña</button></td></tr>`).join('')}</tbody></table></div>`;
  }).join('')||'<div class="c">Aún no tienes alumnos inscritos en ningún grupo.</div>'}`;
 }
 function trackingPage(){
@@ -1108,6 +1134,7 @@ function wire(){
  document.querySelectorAll('[data-role-user]').forEach(x=>x.onchange=()=>changeUserRole(x.dataset.roleUser,x.value));
  document.querySelectorAll('[data-delete-group]').forEach(x=>x.onclick=()=>deleteGroup(x.dataset.deleteGroup));
  document.querySelectorAll('[data-reset-pass]').forEach(x=>x.onclick=()=>showResetPasswordModal(x.dataset.resetPass,x.dataset.resetName));
+ const gf=document.getElementById('groupFilter');if(gf)gf.onchange=()=>{app.studentsGroupFilter=gf.value;render()};
 }
 function render(){
  if(!app.profile)return renderAuth('login');
