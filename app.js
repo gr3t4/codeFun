@@ -10,7 +10,7 @@ function usernameToEmail(u){
  const v=String(u||'').trim().toLowerCase();
  return v.includes('@')?v:v+USERNAME_DOMAIN;
 }
-let app={mode:hasSupabase?'cloud':'demo',user:null,profile:null,view:'home',subject:'python',session:null,lesson:null,groups:[],students:[],progress:[],attempts:[],leaderboard:[],studentsGroupFilter:'all',admin:{profiles:[],groups:[],members:[],progress:[]}};
+let app={mode:hasSupabase?'cloud':'demo',user:null,profile:null,view:'home',subject:'python',session:null,lesson:null,groups:[],students:[],progress:[],attempts:[],leaderboard:[],studentsGroupFilter:'all',studentsSearchQuery:'',adminSearchQuery:'',admin:{profiles:[],groups:[],members:[],progress:[]}};
 
 const LEVELS=[
  {name:'Novato',min:0},
@@ -230,7 +230,7 @@ async function loadTeacherStudents(){
  if(app.mode!=='cloud'){app.students=demoStudents();return}
  if(!app.groups.length){app.students=[];return}
  const gids=app.groups.map(g=>g.id);
- const {data:m,error}=await sb.from('group_members').select('group_id,student_id,profiles!group_members_student_id_fkey(id,full_name,last_login)').in('group_id',gids);
+ const {data:m,error}=await sb.from('group_members').select('group_id,student_id,profiles!group_members_student_id_fkey(id,full_name,username,last_login)').in('group_id',gids);
  if(error){console.error(error);app.students=[];return}
  const ids=[...new Set((m||[]).map(x=>x.student_id))];
  let prog=[];if(ids.length){const r=await sb.from('student_progress').select('*').in('student_id',ids);prog=r.data||[]}
@@ -969,22 +969,27 @@ function teacherGroupLabel(gid){
 function studentsPage(){
  const sts=app.mode==='demo'?demoStudents():app.students;
  if(app.mode==='demo')return `<h2>Alumnos</h2><h3>Programación 3102 <span class="muted">(${sts.length})</span></h3><div class="c"><table class="table"><thead><tr><th>Alumno</th><th>Avance</th><th>Aciertos</th><th>Estado</th><th></th></tr></thead><tbody>${sts.map(s=>`<tr><td>${esc(s.full_name)}</td><td>${studentCompletion(s)}%</td><td>${studentAvg(s)}%</td><td><span class="badge ${studentAvg(s)<60?'redb':studentAvg(s)<75?'amber':'green'}">${studentAvg(s)<60?'Atención':studentAvg(s)<75?'En proceso':'Buen avance'}</span></td><td><button class="btn ghost" data-student="${s.id}">Ver</button></td></tr>`).join('')}</tbody></table></div>`;
- const byGroup=studentsByGroup(sts);
+ const query=(app.studentsSearchQuery||'').trim().toLowerCase();
+ const matches=query?sts.filter(s=>(s.full_name||'').toLowerCase().includes(query)||(s.username||'').toLowerCase().includes(query)):sts;
+ const byGroup=studentsByGroup(matches);
  let gids=Object.keys(byGroup);
  const filter=app.studentsGroupFilter||'all';
  if(filter!=='all')gids=gids.filter(gid=>gid===filter);
- return `<div class="row" style="border:0"><h2 style="margin:0">Alumnos</h2>
-   <select id="groupFilter" style="max-width:260px">
-     <option value="all" ${filter==='all'?'selected':''}>Todos los grupos</option>
-     ${app.groups.map(g=>`<option value="${g.id}" ${filter===g.id?'selected':''}>${esc(g.name)} · ${esc(g.code)}</option>`).join('')}
-   </select>
+ return `<div class="row" style="border:0;flex-wrap:wrap;gap:10px"><h2 style="margin:0">Alumnos</h2>
+   <div class="row" style="border:0;gap:8px;flex-wrap:wrap">
+     <input id="studentSearch" placeholder="Buscar alumno por nombre o usuario…" value="${esc(app.studentsSearchQuery||'')}" style="max-width:240px">
+     <select id="groupFilter" style="max-width:260px">
+       <option value="all" ${filter==='all'?'selected':''}>Todos los grupos</option>
+       ${app.groups.map(g=>`<option value="${g.id}" ${filter===g.id?'selected':''}>${esc(g.name)} · ${esc(g.code)}</option>`).join('')}
+     </select>
+   </div>
  </div>
- <p class="muted">${sts.length} alumno${sts.length===1?'':'s'} en ${app.groups.length} grupo${app.groups.length===1?'':'s'}.</p>
+ <p class="muted">${matches.length} alumno${matches.length===1?'':'s'}${query?` que coincide${matches.length===1?'':'n'} con "${esc(app.studentsSearchQuery)}"`:''} en ${app.groups.length} grupo${app.groups.length===1?'':'s'}.</p>
  ${gids.map(gid=>{
    const list=byGroup[gid];
    return `<h3 style="margin-top:22px">${esc(teacherGroupLabel(gid))} <span class="muted">(${list.length})</span></h3>
    <div class="c"><table class="table"><thead><tr><th>Alumno</th><th>Avance</th><th>Aciertos</th><th>Estado</th><th>Última conexión</th><th></th><th></th></tr></thead><tbody>${list.map(s=>`<tr><td>${esc(s.full_name)}</td><td>${studentCompletion(s)}%</td><td>${studentAvg(s)}%</td><td><span class="badge ${studentAvg(s)<60?'redb':studentAvg(s)<75?'amber':'green'}">${studentAvg(s)<60?'Atención':studentAvg(s)<75?'En proceso':'Buen avance'}</span></td><td class="muted small">${lastSeenText(s.last_login)}</td><td><button class="btn ghost" data-student="${s.id}">Ver</button></td><td><button class="btn ghost" data-reset-pass="${s.id}" data-reset-name="${esc(s.full_name)}">Contraseña</button></td></tr>`).join('')}</tbody></table></div>`;
- }).join('')||'<div class="c">Aún no tienes alumnos inscritos en ningún grupo.</div>'}`;
+ }).join('')||`<div class="c">${query?'Ningún alumno coincide con tu búsqueda.':'Aún no tienes alumnos inscritos en ningún grupo.'}</div>`}`;
 }
 function trackingPage(){
  const sts=app.mode==='demo'?demoStudents():app.students;
@@ -1015,9 +1020,12 @@ function groupNameFor(gid){return app.admin.groups.find(g=>g.id===gid)?.name||''
 function studentGroupOf(uid){const m=app.admin.members.find(x=>x.student_id===uid);return m?app.admin.groups.find(g=>g.id===m.group_id):null}
 function adminUsersPage(){
  const roles=[['admin','Administradores'],['teacher','Docentes'],['student','Alumnos']];
- return `<h2>Cuentas</h2><p class="muted">Cambia el rol de cualquier cuenta. Los cambios se aplican de inmediato.</p>
+ const query=(app.adminSearchQuery||'').trim().toLowerCase();
+ const profiles=query?app.admin.profiles.filter(p=>(p.full_name||'').toLowerCase().includes(query)||(p.username||'').toLowerCase().includes(query)):app.admin.profiles;
+ return `<div class="row" style="border:0;flex-wrap:wrap;gap:10px"><h2 style="margin:0">Cuentas</h2><input id="adminSearch" placeholder="Buscar por nombre o usuario…" value="${esc(app.adminSearchQuery||'')}" style="max-width:260px"></div>
+ <p class="muted">Cambia el rol de cualquier cuenta. Los cambios se aplican de inmediato.</p>
  ${roles.map(([r,label])=>{
-   const rows=app.admin.profiles.filter(p=>p.role===r);
+   const rows=profiles.filter(p=>p.role===r);
    return `<h3 style="margin-top:22px">${label} <span class="muted">(${rows.length})</span></h3>
    <div class="c"><table class="table"><thead><tr><th>Nombre</th><th>Usuario</th>${r==='student'?'<th>Grupo</th>':''}<th>Última conexión</th><th>Rol</th><th></th></tr></thead><tbody>
    ${rows.map(p=>`<tr>
@@ -1031,7 +1039,7 @@ function adminUsersPage(){
        <option value="admin" ${p.role==='admin'?'selected':''}>Admin</option>
      </select></td>
      <td><button class="btn ghost" data-reset-pass="${p.id}" data-reset-name="${esc(p.full_name||p.username||'')}">Contraseña</button></td>
-   </tr>`).join('')||`<tr><td colspan="6" class="muted">Sin cuentas.</td></tr>`}
+   </tr>`).join('')||`<tr><td colspan="6" class="muted">${query?'Ningún resultado.':'Sin cuentas.'}</td></tr>`}
    </tbody></table></div>`;
  }).join('')}`;
 }
@@ -1135,6 +1143,19 @@ function wire(){
  document.querySelectorAll('[data-delete-group]').forEach(x=>x.onclick=()=>deleteGroup(x.dataset.deleteGroup));
  document.querySelectorAll('[data-reset-pass]').forEach(x=>x.onclick=()=>showResetPasswordModal(x.dataset.resetPass,x.dataset.resetName));
  const gf=document.getElementById('groupFilter');if(gf)gf.onchange=()=>{app.studentsGroupFilter=gf.value;render()};
+ wireLiveSearch('studentSearch',v=>app.studentsSearchQuery=v);
+ wireLiveSearch('adminSearch',v=>app.adminSearchQuery=v);
+}
+function wireLiveSearch(id,setter){
+ const input=document.getElementById(id);
+ if(!input)return;
+ input.oninput=()=>{
+   const pos=input.selectionStart;
+   setter(input.value);
+   render();
+   const again=document.getElementById(id);
+   if(again){again.focus();again.setSelectionRange(pos,pos)}
+ };
 }
 function render(){
  if(!app.profile)return renderAuth('login');
