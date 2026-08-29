@@ -942,6 +942,8 @@ function teacherHome(){
 }
 function studentAvg(s){let done=(s.progress||[]).reduce((a,p)=>a+(p.exercises_done||0),0),c=(s.progress||[]).reduce((a,p)=>a+(p.correct_answers||0),0);return pct(c,done)}
 function studentCompletion(s){let done=(s.progress||[]).reduce((a,p)=>a+(p.exercises_done||0),0);return Math.min(100,pct(done,D.exercises.length))}
+function subjectCompletion(s,subjectId){const p=(s.progress||[]).find(x=>x.subject_id===subjectId);return Math.min(100,pct(p?.exercises_done||0,exBySubject(subjectId).length))}
+function subjectAccuracy(s,subjectId){const p=(s.progress||[]).find(x=>x.subject_id===subjectId);return pct(p?.correct_answers||0,p?.exercises_done||0)}
 function groupsPage(){
  const gs=app.mode==='demo'?[{id:'g1',name:'Programación 3102',code:'PB3102',school_year:'2026-2027'}]:app.groups;
  const countOf=gid=>app.mode==='demo'?demoStudents().length:app.students.filter(s=>s.group_id===gid).length;
@@ -968,7 +970,7 @@ function teacherGroupLabel(gid){
 }
 function studentsPage(){
  const sts=app.mode==='demo'?demoStudents():app.students;
- if(app.mode==='demo')return `<h2>Alumnos</h2><h3>Programación 3102 <span class="muted">(${sts.length})</span></h3><div class="c"><table class="table"><thead><tr><th>Alumno</th><th>Avance</th><th>Aciertos</th><th>Estado</th><th></th></tr></thead><tbody>${sts.map(s=>`<tr><td>${esc(s.full_name)}</td><td>${studentCompletion(s)}%</td><td>${studentAvg(s)}%</td><td><span class="badge ${studentAvg(s)<60?'redb':studentAvg(s)<75?'amber':'green'}">${studentAvg(s)<60?'Atención':studentAvg(s)<75?'En proceso':'Buen avance'}</span></td><td><button class="btn ghost" data-student="${s.id}">Ver</button></td></tr>`).join('')}</tbody></table></div>`;
+ if(app.mode==='demo')return `<h2>Alumnos</h2><h3>Programación 3102 <span class="muted">(${sts.length})</span></h3><div class="c" style="overflow-x:auto"><table class="table"><thead><tr><th>Alumno</th>${Object.values(D.subjects).map(sub=>`<th>${esc(sub.short)}</th>`).join('')}<th>Estado</th><th></th></tr></thead><tbody>${sts.map(s=>`<tr><td>${esc(s.full_name)}</td>${Object.keys(D.subjects).map(sid=>`<td><b>${subjectCompletion(s,sid)}%</b><div class="muted small">${subjectAccuracy(s,sid)}% aciertos</div></td>`).join('')}<td><span class="badge ${studentAvg(s)<60?'redb':studentAvg(s)<75?'amber':'green'}">${studentAvg(s)<60?'Atención':studentAvg(s)<75?'En proceso':'Buen avance'}</span></td><td><button class="btn ghost" data-student="${s.id}">Ver</button></td></tr>`).join('')}</tbody></table></div>`;
  const query=(app.studentsSearchQuery||'').trim().toLowerCase();
  const matches=query?sts.filter(s=>(s.full_name||'').toLowerCase().includes(query)||(s.username||'').toLowerCase().includes(query)):sts;
  const byGroup=studentsByGroup(matches);
@@ -988,7 +990,7 @@ function studentsPage(){
  ${gids.map(gid=>{
    const list=byGroup[gid];
    return `<h3 style="margin-top:22px">${esc(teacherGroupLabel(gid))} <span class="muted">(${list.length})</span></h3>
-   <div class="c"><table class="table"><thead><tr><th>Alumno</th><th>Avance</th><th>Aciertos</th><th>Estado</th><th>Última conexión</th><th></th><th></th></tr></thead><tbody>${list.map(s=>`<tr><td>${esc(s.full_name)}</td><td>${studentCompletion(s)}%</td><td>${studentAvg(s)}%</td><td><span class="badge ${studentAvg(s)<60?'redb':studentAvg(s)<75?'amber':'green'}">${studentAvg(s)<60?'Atención':studentAvg(s)<75?'En proceso':'Buen avance'}</span></td><td class="muted small">${lastSeenText(s.last_login)}</td><td><button class="btn ghost" data-student="${s.id}">Ver</button></td><td><button class="btn ghost" data-reset-pass="${s.id}" data-reset-name="${esc(s.full_name)}">Contraseña</button></td></tr>`).join('')}</tbody></table></div>`;
+   <div class="c" style="overflow-x:auto"><table class="table"><thead><tr><th>Alumno</th>${Object.values(D.subjects).map(sub=>`<th>${esc(sub.short)}</th>`).join('')}<th>Estado</th><th>Última conexión</th><th></th><th></th></tr></thead><tbody>${list.map(s=>`<tr><td>${esc(s.full_name)}</td>${Object.keys(D.subjects).map(sid=>`<td><b>${subjectCompletion(s,sid)}%</b><div class="muted small">${subjectAccuracy(s,sid)}% aciertos</div></td>`).join('')}<td><span class="badge ${studentAvg(s)<60?'redb':studentAvg(s)<75?'amber':'green'}">${studentAvg(s)<60?'Atención':studentAvg(s)<75?'En proceso':'Buen avance'}</span></td><td class="muted small">${lastSeenText(s.last_login)}</td><td><button class="btn ghost" data-student="${s.id}">Ver</button></td><td><button class="btn ghost" data-reset-pass="${s.id}" data-reset-name="${esc(s.full_name)}">Contraseña</button></td></tr>`).join('')}</tbody></table></div>`;
  }).join('')||`<div class="c">${query?'Ningún alumno coincide con tu búsqueda.':'Aún no tienes alumnos inscritos en ningún grupo.'}</div>`}`;
 }
 function trackingPage(){

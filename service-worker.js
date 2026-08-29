@@ -1,4 +1,4 @@
-const C='codefun-v19';
+const C='codefun-v20';
 const A=['./','./index.html','./styles.css','./app.js','./data.js','./config.js','./manifest.json','./icons/icon.svg','./icons/icon-192.png','./icons/icon-512.png','./icons/apple-touch-icon.png'];
 self.addEventListener('install',e=>{
   self.skipWaiting();
